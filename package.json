@@ -1,50 +1,55 @@
 {
-  "name": "my-app",
-  "private": true,
-  "version": "0.0.0",
+  "name": "genesis-verify",
+  "version": "0.1.0",
+  "description": "The acceptance layer for machine-authored work. Compiles frozen acceptance contracts, collects evidence, renders deterministic verdicts, and records them in an immutable ledger.",
+  "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "genesis": "./bin/genesis.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
   "scripts": {
-    "dev": "vite optimize && vite",
-    "dev:kernel": "tsx kernel/index.ts",
-    "dev:all": "concurrently \"npm run dev:kernel\" \"npm run dev\"",
-    "build": "vite build",
-    "preview": "vite preview",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest --run"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "genesis": "tsx src/cli/run.ts"
+  },
+  "keywords": [
+    "acceptance",
+    "verification",
+    "evidence",
+    "audit",
+    "ledger",
+    "ci",
+    "code-review",
+    "ai-agents"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fernandogarzaaa/genesis.git"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
-    "@tailwindcss/vite": "^4.1.18",
     "better-sqlite3": "^13.0.3",
-    "dotenv": "^17.4.2",
-    "lucide-react": "^1.28.0",
-    "openai": "^7.4.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "tailwindcss": "^4.1.18",
     "uuid": "^14.0.1",
-    "ws": "^8.21.2",
-    "zod": "^4.4.3",
-    "zustand": "^5.0.14"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@playwright/cli": "^0.1.17",
-    "@testing-library/jest-dom": "^7.0.0",
-    "@testing-library/react": "^16.3.2",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24.10.1",
-    "@types/react": "^18.3.1",
-    "@types/react-dom": "^18.3.1",
-    "@types/uuid": "^10.0.0",
-    "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "^5.1.1",
-    "concurrently": "^10.0.4",
-    "globals": "^16.5.0",
-    "jsdom": "^29.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "tsx": "^4.23.7",
     "typescript": "~5.9.3",
-    "vite": "^7.2.4",
-    "vite-plugin-svgr": "^4.5.0",
     "vitest": "^4.1.10"
   }
 }
