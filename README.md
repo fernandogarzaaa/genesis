@@ -13,8 +13,8 @@ Genesis began as a cognitive operating system for autonomous agents (kernel,
 event bus, AXIOM/EVE/ADAM subsystems, React command center). That execution and
 orchestration layer is not defensible territory — Claude Code, Codex, LangGraph,
 Temporal, OpenRouter and LiteLLM already occupy agent execution, workflow
-orchestration, model routing and tool calling. It has been archived at tag
-`v1-kernel-archive`.
+orchestration, model routing and tool calling. It is archived in git history —
+`main` still carries it in full, and it is tagged `v1-kernel-archive` locally.
 
 The problem that remains unsolved is the one *after* execution: an agent can
 generate code, but it cannot reliably establish that the implementation is

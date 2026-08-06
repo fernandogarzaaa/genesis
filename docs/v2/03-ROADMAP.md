@@ -11,7 +11,8 @@ estimates, not commitments.
 ## M0 — Genesis passes its own bar (½ day)
 
 **Ship:** CI workflow; `typecheck` fixed to cover the kernel, not just `src/`;
-`v1-kernel-archive` tag pushed.
+v1 archived (`main` retains it; `v1-kernel-archive` tag where the remote accepts
+tag pushes).
 
 **Why first:** the kernel currently does not compile (`00-AUDIT.md` §1), and the
 one command that would have caught it was silently scoped to the React app. A
