@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Covers every TypeScript file in the repository. The v1 kernel was
+      # excluded from this command by a root-config scope mismatch, which is
+      # why three unresolvable imports went unnoticed. See docs/v2/00-AUDIT.md.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
