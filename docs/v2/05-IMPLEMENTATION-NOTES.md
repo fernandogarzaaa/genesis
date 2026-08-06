@@ -24,7 +24,9 @@ The reasoning against the bus in the adjudication path stands unchanged and is
 now enforced by a test rather than a doctrine: `collectEvidence` returns a
 materialized `Evidence[]` and `adjudicate` is called directly.
 
-The v1 bus is in git history at tag `v1-kernel-archive`. Its DLQ bug — the
+The v1 bus is preserved in git history on `main` (and at the local
+`v1-kernel-archive` tag; pushing tags is currently rejected by this
+environment's git proxy, so `main` is the durable copy). Its DLQ bug — the
 fabricated retry history described in `02-MIGRATION.md` — went with it.
 
 ## 2. Collectors report observations; the Adjudicator decides pass/fail
