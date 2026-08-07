@@ -66,3 +66,25 @@ export { verify, VerifyError, EXIT_CODES, exitCodeFor } from "./verify.js";
 export type { VerifyOptions, VerifyResult } from "./verify.js";
 
 export { renderVerdict } from "./report.js";
+
+// ── Assurance: auditing the verifier rather than the artifact ───────────────
+
+export { runAudit, AuditError, AUDIT_EXIT } from "./assurance/audit.js";
+export type { AuditOptions, AuditRecord } from "./assurance/audit.js";
+export { concludeAudit, classifyOutcome } from "./assurance/findings.js";
+export type {
+  AuditConclusion,
+  AuditMetrics,
+  Finding,
+  ProbeOutcome,
+  ProbeResult,
+  Severity,
+} from "./assurance/findings.js";
+export { suiteDigest, validateSuite, exploitProbes, controlProbes } from "./assurance/probe.js";
+export type { Probe, ProbeSuite, ProbeTask } from "./assurance/probe.js";
+export { SUITES, getSuite, suiteNames } from "./assurance/suites/index.js";
+export { TAXONOMY, DEFECT_CLASSES, DOMAINS, descriptorsFor } from "./assurance/taxonomy.js";
+export type { DefectClass, DefectDescriptor, Domain } from "./assurance/taxonomy.js";
+export { VerifierAdapter, parseJsonLoose } from "./assurance/verifier.js";
+export type { AcceptRule, Observed, VerifierConfig, VerifierResponse } from "./assurance/verifier.js";
+export { renderAudit } from "./assurance/report.js";
