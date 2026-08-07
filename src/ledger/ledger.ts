@@ -28,7 +28,9 @@ export type EntryType =
   | "CONTRACT_AMENDED"
   | "EVIDENCE_RECORDED"
   | "VERDICT_RENDERED"
-  | "OUTCOME_LABELED";
+  | "OUTCOME_LABELED"
+  /** An assurance audit of a verifier under test. See src/assurance/. */
+  | "VERIFIER_AUDITED";
 
 export type OutcomeLabel = "merged_clean" | "reverted" | "hotfixed" | "rejected";
 
@@ -150,6 +152,18 @@ export class Ledger {
 
   labelOutcome(contract_hash: string, payload: OutcomePayload): LedgerEntry {
     return this.#append("OUTCOME_LABELED", contract_hash, payload);
+  }
+
+  /**
+   * Record an assurance audit of a verifier.
+   *
+   * `subject_hash` identifies the (verifier, suite) pair rather than a contract.
+   * Chaining these matters for the same reason it matters for verdicts: "we
+   * audited this verifier on that date and it was clean" is a claim someone may
+   * later want to have been true, and an editable record cannot support it.
+   */
+  recordVerifierAudit(subject_hash: string, payload: unknown): LedgerEntry {
+    return this.#append("VERIFIER_AUDITED", subject_hash, payload);
   }
 
   // ── Artifacts ─────────────────────────────────────────────────────────────
