@@ -19,11 +19,23 @@
  * in provenance, and `admissibility.ts` rejects behavioral evidence that
  * arrives without one.
  *
+ * EVE's CLI has no `--json` flag and prints nothing machine-readable to
+ * stdout — `eve run` writes `report.json` into `--out` (default
+ * `.eve-output/`). An earlier version of this adapter built a `--json` command
+ * and parsed stdout, which meant it had never actually been exercised against
+ * the real CLI: it would have failed on the first live run with "could not
+ * parse an EVE SessionResult," misreported as a verifier defect rather than an
+ * integration bug. Fixed by pointing `--out` at a scratch directory this
+ * adapter owns and reading `report.json` back after the process exits.
+ *
  *   config: { url, persona?, goal?, seed, command?: string[], timeout_ms? }
  *   observes: goal_achieved, abandoned, overall_score, critical_findings,
  *             major_findings, total_findings, steps, seed
  */
 
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Evidence, ObservedValue } from "../envelope.js";
 import {
   buildEvidence,
@@ -56,12 +68,13 @@ export const eveCollector: Collector = {
   name: "eve",
   adapterVersion: ADAPTER_VERSION,
 
-  async version(ctx: CollectorContext): Promise<string> {
-    const result = await ctx.runner.run(["npx", "eve", "--version"], {
-      cwd: ctx.repoPath,
-      timeoutMs: 60_000,
-    });
-    return result.stdout.trim() || "unknown";
+  async version(): Promise<string> {
+    // EVE's CLI has no --version flag: `eve --version` exits 2 and prints its
+    // help text (see docs/assurance — this is the same "trust the exit code"
+    // trap the assurance module's own probes look for). Recording whatever
+    // that returned as `collector.version` would have silently put help text
+    // into the evidence envelope. Reported honestly as unknown instead.
+    return "unknown (eve has no --version flag)";
   },
 
   async collect(targets: readonly CollectionTarget[], ctx: CollectorContext): Promise<Evidence[]> {
@@ -96,13 +109,32 @@ export const eveCollector: Collector = {
         continue;
       }
 
-      const command = configCommand(req) ?? defaultCommand(req, url, seed);
+      // A scratch directory this adapter owns and cleans up. EVE writes
+      // report.json here rather than to stdout.
+      const outDir = mkdtempSync(join(tmpdir(), "genesis-eve-"));
+      let session: SessionResult | null = null;
+      let readError: string | null = null;
+
+      const command = configCommand(req) ?? defaultCommand(req, url, seed, outDir);
       const result = await ctx.runner.run(command, {
         cwd: ctx.repoPath,
         timeoutMs: configNumber(req, "timeout_ms") ?? 15 * 60_000,
       });
-      const artifact = ctx.putArtifact(artifactText(result));
-      const session = parseSession(result.stdout) ?? parseSession(result.stderr);
+
+      if (!result.spawn_error && !result.timed_out) {
+        try {
+          const raw = readFileSync(join(outDir, "report.json"), "utf8");
+          session = parseSession(raw);
+          if (!session) readError = "report.json did not contain a recognizable SessionResult";
+        } catch (error) {
+          readError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      const artifact = ctx.putArtifact(
+        artifactText(result) + (session ? `\n--- report.json ---\n${JSON.stringify(session, null, 2)}` : ""),
+      );
+      rmSync(outDir, { recursive: true, force: true });
 
       if (result.spawn_error || result.timed_out || !session) {
         out.push(buildEvidence({
@@ -114,7 +146,7 @@ export const eveCollector: Collector = {
               ? `failed to run eve: ${result.spawn_error}`
               : result.timed_out
                 ? "eve session exceeded its timeout"
-                : "could not parse an EVE SessionResult from the output (expected --json)",
+                : `could not read report.json from --out (${readError ?? "no file written"})`,
           ],
           provenance: { ...result, seed },
           artifactDigest: artifact,
@@ -140,8 +172,15 @@ function defaultCommand(
   req: CollectionTarget["requirement"],
   url: string,
   seed: number,
+  outDir: string,
 ): string[] {
-  const command = ["npx", "eve", "run", url, "--json", "--seed", String(seed)];
+  const command = [
+    "npx", "eve", "run", url,
+    "--seed", String(seed),
+    "--out", outDir,
+    "--no-screenshots",
+    "--quiet",
+  ];
   const persona = configString(req, "persona");
   if (persona) command.push("--persona", persona);
   const goal = configString(req, "goal");

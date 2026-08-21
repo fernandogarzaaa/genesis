@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { collectEvidence, makeContext } from "../src/evidence/collect.js";
 import { defaultRegistry } from "../src/evidence/collectors.js";
@@ -7,6 +9,7 @@ import { typecheckCollector } from "../src/evidence/mechanical/typecheck.js";
 import { commandCollector } from "../src/evidence/mechanical/command.js";
 import { eveCollector, parseSession } from "../src/evidence/behavioral/eve.js";
 import { CollectorRegistry } from "../src/evidence/registry.js";
+import type { RunOptions } from "../src/evidence/runner.js";
 import { criterion, contract, FakeRunner, requirement, testReport } from "./helpers.js";
 import { freezeContract } from "../src/contract/freeze.js";
 
@@ -222,7 +225,30 @@ describe("lint diagnostics", () => {
 });
 
 describe("eve collector", () => {
-  const SESSION = JSON.stringify({
+  // EVE's CLI has no --json flag: `eve run` writes report.json into whatever
+  // --out directory it is given, rather than printing to stdout. This runner
+  // stands in for the real CLI by writing to that path itself, so the tests
+  // exercise the same file-handoff contract the adapter actually relies on —
+  // the earlier stdout-mocking version of these tests would have passed
+  // against an adapter that had never worked against the real binary.
+  class EveFakeRunner extends FakeRunner {
+    readonly #session: Record<string, unknown> | null;
+    constructor(session: Record<string, unknown> | null) {
+      super();
+      this.#session = session;
+    }
+    override run(command: readonly string[], options: RunOptions) {
+      const outIndex = command.indexOf("--out");
+      const outDir = outIndex >= 0 ? command[outIndex + 1] : undefined;
+      if (outDir && this.#session) {
+        mkdirSync(outDir, { recursive: true });
+        writeFileSync(join(outDir, "report.json"), JSON.stringify(this.#session), "utf8");
+      }
+      return super.run(command, options);
+    }
+  }
+
+  const SESSION = {
     seed: 4711,
     goalAchieved: false,
     abandoned: true,
@@ -235,10 +261,10 @@ describe("eve collector", () => {
     ],
     scores: [{ dimension: "overall", value: 41 }],
     usage: { steps: 22, durationMs: 60000 },
-  });
+  };
 
   it("maps a SessionResult onto observations", async () => {
-    const runner = new FakeRunner({ "npx eve --version": { stdout: "0.3.1" } }, { stdout: SESSION });
+    const runner = new EveFakeRunner(SESSION);
     const [record] = await eveCollector.collect(
       [
         target({
@@ -262,7 +288,7 @@ describe("eve collector", () => {
   });
 
   it("records the seed in provenance so the session can be reproduced", async () => {
-    const runner = new FakeRunner({ "npx eve --version": { stdout: "0.3.1" } }, { stdout: SESSION });
+    const runner = new EveFakeRunner(SESSION);
     const [record] = await eveCollector.collect(
       [target({ collector: "eve", kind: "behavioral", config: { url: "http://x", seed: 4711 } })],
       ctx(runner),
@@ -271,7 +297,7 @@ describe("eve collector", () => {
   });
 
   it("refuses to run without a seed", async () => {
-    const runner = new FakeRunner({ "npx eve --version": { stdout: "0.3.1" } }, { stdout: SESSION });
+    const runner = new EveFakeRunner(SESSION);
     const [record] = await eveCollector.collect(
       [target({ collector: "eve", kind: "behavioral", config: { url: "http://x" } })],
       ctx(runner),
@@ -280,14 +306,44 @@ describe("eve collector", () => {
     expect(record?.detail[0]).toContain("seed");
   });
 
-  it("passes the seed through to the CLI invocation", async () => {
-    const runner = new FakeRunner({ "npx eve --version": { stdout: "0.3.1" } }, { stdout: SESSION });
+  it("passes the seed and a scratch --out directory to the CLI invocation, never --json", async () => {
+    const runner = new EveFakeRunner(SESSION);
     await eveCollector.collect(
       [target({ collector: "eve", kind: "behavioral", config: { url: "http://x", seed: 99 } })],
       ctx(runner),
     );
     const run = runner.calls.find((c) => c.command.includes("run"));
-    expect(run?.command).toEqual(expect.arrayContaining(["--seed", "99", "--json"]));
+    expect(run?.command).toEqual(expect.arrayContaining(["--seed", "99", "--out"]));
+    expect(run?.command).not.toContain("--json");
+  });
+
+  it("errors clearly when the CLI runs but writes no report.json", async () => {
+    const runner = new EveFakeRunner(null);
+    const [record] = await eveCollector.collect(
+      [target({ collector: "eve", kind: "behavioral", config: { url: "http://x", seed: 1 } })],
+      ctx(runner),
+    );
+    expect(record?.status).toBe("error");
+    expect(record?.detail[0]).toContain("report.json");
+  });
+
+  it("cleans up its scratch directory after a successful run", async () => {
+    const runner = new EveFakeRunner(SESSION);
+    let capturedOutDir: string | undefined;
+    const originalRun = runner.run.bind(runner);
+    runner.run = (command, options) => {
+      const i = command.indexOf("--out");
+      if (i >= 0) capturedOutDir = command[i + 1];
+      return originalRun(command, options);
+    };
+
+    await eveCollector.collect(
+      [target({ collector: "eve", kind: "behavioral", config: { url: "http://x", seed: 1 } })],
+      ctx(runner),
+    );
+
+    expect(capturedOutDir).toBeTruthy();
+    expect(existsSync(capturedOutDir ?? "")).toBe(false);
   });
 
   it("parses a session nested under `result`", () => {
