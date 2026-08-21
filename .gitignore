@@ -27,3 +27,7 @@ dist-ssr
 .genesis/
 coverage/
 contract.json
+
+# Python
+__pycache__/
+*.py[cod]
