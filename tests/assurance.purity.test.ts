@@ -18,6 +18,7 @@ const ALLOWED_IMPORTS = [
   "../backtest/metrics.js",
   "./probe.js",
   "./taxonomy.js",
+  "./behavioral-taxonomy.js",
   "./verifier.js",
 ];
 
@@ -50,12 +51,16 @@ describe("assurance findings purity", () => {
   });
 
   it("imports runtime values only from pure modules", () => {
-    // Two: `wilson` (a statistical function, deliberately reused rather than
-    // reimplemented) and `TAXONOMY` (a frozen data table). Both are pure;
+    // Three: `wilson` (a statistical function, deliberately reused rather
+    // than reimplemented) and the two frozen taxonomy tables. All pure;
     // everything else this module needs is a type.
     const valueImports = [...source.matchAll(/^import\s+(?!type\b)([^;]+?)\s+from\s+["']([^"']+)["']/gm)].map(
       (m) => m[2],
     );
-    expect(valueImports.sort()).toEqual(["../backtest/metrics.js", "./taxonomy.js"]);
+    expect(valueImports.sort()).toEqual([
+      "../backtest/metrics.js",
+      "./behavioral-taxonomy.js",
+      "./taxonomy.js",
+    ]);
   });
 });

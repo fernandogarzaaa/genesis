@@ -44,7 +44,7 @@ describe("taxonomy", () => {
   });
 
   it("registers a suite per domain", () => {
-    expect(suiteNames()).toEqual(["code", "json", "math"]);
+    expect(suiteNames()).toEqual(["behavioral", "code", "json", "math"]);
   });
 });
 

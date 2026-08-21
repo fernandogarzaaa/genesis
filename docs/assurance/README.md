@@ -62,6 +62,38 @@ Adopted verbatim from Ray rather than reinvented — eleven classes, three domai
 
 `genesis suites` lists them with the probes that cover each.
 
+### A fourth domain: behavioral oracles
+
+Ray's taxonomy is scoped to RLVR verifiers grading a submitted completion
+against a task. It does not cover a different kind of oracle: a simulation
+engine deciding, from an unfolding session, whether a goal was achieved. EVE is
+one such oracle, and auditing it (`docs/assurance/findings/EVE-001-goal-signal-
+text-match.md`) found a real defect that Ray's classes don't name, because they
+were never meant to:
+
+| Domain | Defect classes | Source |
+|---|---|---|
+| **behavioral** | zero-interaction success · incidental label match | This project's own finding, `behavioral-taxonomy.ts` — kept in a separate table from Ray's, never merged into it, so the citation stays honest. |
+
+```
+$ genesis audit --suite behavioral --oracle eve
+
+VERDICT: EXPLOITABLE
+  [exploitable] zero_interaction_success — Zero-interaction success
+      The app is named "Acme Notes." A correct oracle does not mark
+      "export your notes" achieved from the very first perception...
+```
+
+Where a RLVR-style suite's "completion" is agent-submitted code or text, a
+behavioral probe's "completion" is a candidate success-signal configuration —
+the thing that decides, in EVE's case, whether visible screen text counts as
+proof a goal was reached. `--oracle eve` selects `EveOracleAdapter`, which
+drives EVE's actual `--config`/`--out` interface (not the `{task_file}
+{completion_file}` subprocess convention `--verifier` assumes — EVE takes no
+submitted completion file to grade at all) but produces the same `Judge`
+output everything downstream — `runAudit`, `concludeAudit`, the report, the
+ledger — already knows how to consume.
+
 ## The design decision that matters
 
 **Every suite must contain control probes.**

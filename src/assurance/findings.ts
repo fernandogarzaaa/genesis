@@ -12,9 +12,18 @@
  */
 
 import { wilson, type Interval } from "../backtest/metrics.js";
-import type { Probe } from "./probe.js";
-import { TAXONOMY, type DefectClass } from "./taxonomy.js";
+import type { AnyDefectClass, Probe } from "./probe.js";
+import { TAXONOMY } from "./taxonomy.js";
+import { BEHAVIORAL_TAXONOMY } from "./behavioral-taxonomy.js";
 import type { Observed } from "./verifier.js";
+
+/** Descriptors from both taxonomies, keyed by defect class. Neither table needs to know the other exists. */
+export const ALL_DESCRIPTORS: Readonly<
+  Record<AnyDefectClass, { title: string; defect: string; exploit: string }>
+> = {
+  ...TAXONOMY,
+  ...BEHAVIORAL_TAXONOMY,
+};
 
 /** What the verifier did, judged against what a correct one must do. */
 export type ProbeOutcome =
@@ -30,7 +39,7 @@ export type ProbeOutcome =
 
 export interface ProbeResult {
   readonly probe_id: string;
-  readonly defect_class: DefectClass;
+  readonly defect_class: AnyDefectClass;
   readonly expected: Probe["expect"];
   readonly observed: Observed;
   readonly outcome: ProbeOutcome;
@@ -60,7 +69,7 @@ export function classifyOutcome(expected: Probe["expect"], observed: Observed): 
 export type Severity = "exploitable" | "unreliable" | "over_strict";
 
 export interface Finding {
-  readonly defect_class: DefectClass;
+  readonly defect_class: AnyDefectClass;
   readonly title: string;
   readonly severity: Severity;
   readonly summary: string;
@@ -71,7 +80,7 @@ export interface Finding {
 }
 
 export interface ClassStats {
-  readonly defect_class: DefectClass;
+  readonly defect_class: AnyDefectClass;
   readonly exploit_probes: number;
   readonly false_accepts: number;
   readonly unresponsive: number;
@@ -88,7 +97,7 @@ export interface AuditMetrics {
   readonly false_reject_rate: Interval;
   /** Fraction of probes the verifier could not answer at all. */
   readonly error_rate: Interval;
-  readonly exploitable_classes: readonly DefectClass[];
+  readonly exploitable_classes: readonly AnyDefectClass[];
   readonly by_class: readonly ClassStats[];
 }
 
@@ -139,7 +148,7 @@ export function concludeAudit(results: readonly ProbeResult[]): AuditConclusion 
 }
 
 function collectClassStats(exploits: readonly ProbeResult[]): ClassStats[] {
-  const classes = new Map<DefectClass, ProbeResult[]>();
+  const classes = new Map<AnyDefectClass, ProbeResult[]>();
   for (const result of exploits) {
     const list = classes.get(result.defect_class);
     if (list) list.push(result);
@@ -162,13 +171,13 @@ function collectClassStats(exploits: readonly ProbeResult[]): ClassStats[] {
 
 function buildFindings(
   results: readonly ProbeResult[],
-  exploitable: readonly DefectClass[],
+  exploitable: readonly AnyDefectClass[],
   falseRejects: readonly ProbeResult[],
 ): Finding[] {
   const findings: Finding[] = [];
 
   for (const defect_class of exploitable) {
-    const descriptor = TAXONOMY[defect_class];
+    const descriptor = ALL_DESCRIPTORS[defect_class];
     const evidence = results.filter(
       (r) => r.defect_class === defect_class && (r.outcome === "false_accept" || r.outcome === "unresponsive"),
     );

@@ -22,10 +22,11 @@ import { formatInterval, type BacktestSummary } from "../backtest/metrics.js";
 import { renderVerdict } from "../report.js";
 import { EXIT_CODES, exitCodeFor, verify, VerifyError } from "../verify.js";
 import { AuditError, exitCodeFor as auditExitCode, runAudit } from "../assurance/audit.js";
+import { EveOracleAdapter } from "../assurance/eve-oracle-adapter.js";
 import { renderAudit } from "../assurance/report.js";
 import { getSuite, suiteNames } from "../assurance/suites/index.js";
-import { TAXONOMY } from "../assurance/taxonomy.js";
-import { VerifierAdapter, type AcceptRule } from "../assurance/verifier.js";
+import { ALL_DESCRIPTORS } from "../assurance/findings.js";
+import { VerifierAdapter, type AcceptRule, type Judge } from "../assurance/verifier.js";
 import { SubprocessRunner } from "../evidence/runner.js";
 
 const VERSION = "0.1.0";
@@ -52,11 +53,13 @@ const USAGE = `genesis ${VERSION} — the acceptance layer for machine-authored 
 
   genesis collectors         list registered evidence collectors
 
-  genesis audit              --verifier "<cmd with {task_file} {completion_file}>"
-                             --suite <code|json|math> [--name <label>]
-                             [--accept exit_zero|json_reward|json_pass] [--threshold <n>]
-                             [--timeout <ms>] [--ledger <db>] [--json] [--verbose]
-                             exit 0 = SOUND · 1 = EXPLOITABLE · 2 = UNRELIABLE/OVER READY · 3 = internal error
+  genesis audit              --suite <code|json|math|behavioral> [--ledger <db>] [--json] [--verbose]
+                             and exactly one of:
+                               --verifier "<cmd with {task_file} {completion_file}>"  (code/json/math)
+                               --oracle eve [--eve-bin "<cmd>"]                       (behavioral)
+                             [--name <label>] [--accept exit_zero|json_reward|json_pass]
+                             [--threshold <n>] [--timeout <ms>]
+                             exit 0 = SOUND · 1 = EXPLOITABLE · 2 = UNRELIABLE/OVER_STRICT · 3 = internal error
 
   genesis suites             list probe suites and the defect classes they cover
 `;
@@ -538,6 +541,8 @@ async function cmdAudit(argv: readonly string[]): Promise<number> {
     args: [...argv],
     options: {
       verifier: { type: "string" },
+      oracle: { type: "string" },
+      "eve-bin": { type: "string", default: "npx eve" },
       suite: { type: "string" },
       name: { type: "string" },
       accept: { type: "string", default: "json_reward" },
@@ -551,33 +556,48 @@ async function cmdAudit(argv: readonly string[]): Promise<number> {
     allowPositionals: false,
   });
 
-  if (!values.verifier) {
-    return usageError('--verifier is required, e.g. --verifier "node verify.js {task_file} {completion_file}"');
-  }
   if (!values.suite) return usageError(`--suite is required, one of: ${suiteNames().join(", ")}`);
-
   const suite = getSuite(values.suite);
   if (!suite) return usageError(`unknown suite "${values.suite}", expected one of: ${suiteNames().join(", ")}`);
 
-  const command = values.verifier.trim().split(/\s+/);
-  if (!command.some((p) => p.includes("{task_file}")) || !command.some((p) => p.includes("{completion_file}"))) {
-    return usageError("--verifier must contain both {task_file} and {completion_file} placeholders");
+  if (!!values.verifier === (values.oracle !== undefined)) {
+    return usageError(
+      'pass exactly one of --verifier "<cmd with {task_file} {completion_file}>" (RLVR-style suites: ' +
+        "code/json/math) or --oracle eve (behavioral-style suites: behavioral)",
+    );
   }
 
-  const accept = buildAcceptRule(values.accept, values.field, values.threshold);
-  if (accept === null) {
-    return usageError('--accept must be one of: exit_zero, json_reward, json_pass');
-  }
+  let judge: Judge;
 
-  const adapter = new VerifierAdapter(
-    {
-      name: values.name ?? command[0] ?? "verifier",
-      command,
-      accept,
-      timeout_ms: Number(values.timeout ?? 30000),
-    },
-    new SubprocessRunner(),
-  );
+  if (values.oracle !== undefined) {
+    if (values.oracle !== "eve") {
+      return usageError(`unknown --oracle "${values.oracle}"; the only behavioral judge available is "eve"`);
+    }
+    judge = new EveOracleAdapter(
+      { bin: values["eve-bin"].trim().split(/\s+/), timeout_ms: Number(values.timeout ?? 30000) },
+      new SubprocessRunner(),
+    );
+  } else {
+    const command = (values.verifier as string).trim().split(/\s+/);
+    if (!command.some((p) => p.includes("{task_file}")) || !command.some((p) => p.includes("{completion_file}"))) {
+      return usageError("--verifier must contain both {task_file} and {completion_file} placeholders");
+    }
+
+    const accept = buildAcceptRule(values.accept, values.field, values.threshold);
+    if (accept === null) {
+      return usageError('--accept must be one of: exit_zero, json_reward, json_pass');
+    }
+
+    judge = new VerifierAdapter(
+      {
+        name: values.name ?? command[0] ?? "verifier",
+        command,
+        accept,
+        timeout_ms: Number(values.timeout ?? 30000),
+      },
+      new SubprocessRunner(),
+    );
+  }
 
   // The ledger is optional here. An audit is useful as a one-shot check; it
   // becomes evidence only when someone needs to prove it happened.
@@ -585,7 +605,7 @@ async function cmdAudit(argv: readonly string[]): Promise<number> {
 
   try {
     const record = await runAudit({
-      verifier: adapter,
+      verifier: judge,
       suite,
       ledger,
       events:
@@ -649,7 +669,7 @@ function cmdSuites(): number {
       `${name}@${suite.version}  ${exploits.length} exploit + ${controls.length} control probes\n`,
     );
     for (const id of classes) {
-      process.stdout.write(`    ${id.padEnd(26)} ${TAXONOMY[id].defect}\n`);
+      process.stdout.write(`    ${id.padEnd(26)} ${ALL_DESCRIPTORS[id].defect}\n`);
     }
     process.stdout.write("\n");
   }

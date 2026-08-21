@@ -140,10 +140,11 @@ label; the other requires the user to actually get there. Nothing in EVE's
 interface, its config schema, or its documentation signals which kind of word
 is safe to use.
 
-## 5. Why this doesn't fit `src/assurance/`'s existing taxonomy or machinery
+## 5. Why this didn't originally fit `src/assurance/`'s taxonomy or machinery
 
-Two structural mismatches, both worth recording precisely so a future
-extension does this correctly rather than by analogy:
+*(Historical — resolved. See §9.)* Two structural mismatches, recorded here
+because they explain what the extension in §9 actually had to solve, rather
+than an analogy it borrowed:
 
 1. **Ray's taxonomy is scoped to RLVR verifiers**: `verifier(task, agent-
    submitted completion) → accept/reject`, over math/JSON/code. EVE's oracle
@@ -152,20 +153,13 @@ extension does this correctly rather than by analogy:
    simulation engine acting on both. `defect_class: stdout_spoofing` is the
    closest existing analogy (trusting printed text as evidence) but it is an
    analogy, not the same mechanism, and forcing this into `DEFECT_CLASSES`
-   would misrepresent a citation to a paper that doesn't cover this case.
+   would have misrepresented a citation to a paper that doesn't cover this
+   case — so it wasn't; see the separate `behavioral-taxonomy.ts` in §9.
 2. **`VerifierAdapter` assumes a `{task_file, completion_file} → verdict`
    subprocess contract.** EVE's actual interface is `{app, goal, success
    signals} → full session}`, and there is no separate "completion" to
    substitute — the exploit is encoded in the *choice of success-signal
    string*, not in a file handed to a grader.
-
-Concretely: `src/assurance/probe.ts`'s `Probe` and `ProbeSuite` types, and
-`VerifierAdapter`'s file-substitution contract, would need a new `Probe` variant
-whose "completion" is a signal-string choice and whose oracle invocation is
-config-driven rather than file-driven, before this could be run through
-`runAudit()`/`concludeAudit()` and get the shared reporting, ledger recording,
-and Wilson-interval treatment the RLVR suites get. That is real, scoped design
-work — not done here, and not done by force-fitting.
 
 ## 6. What this finding does and does not establish
 
@@ -185,23 +179,19 @@ session-ending logic. It also says nothing about EVE's scoring dimensions
 (usability, accessibility, etc.), which are computed independently and were not
 probed here.
 
-## 7. Options, not a recommendation
+## 7. Options — resolved
 
-This session's instruction was to work on Genesis, not to alter or file issues
-against a sibling repository unasked. Recorded as three live options rather
-than a unilateral action:
+Three options were recorded rather than acted on unilaterally, since this
+session's instruction was to work on Genesis, not to alter or file issues
+against a sibling repository unasked:
 
-1. **File this as an issue against `experience-validation-engine`.** The
-   minimal fix implied by the evidence: require the success-signal match to
-   come from a state change or a post-action screen transition, not from
-   text merely visible on arrival — or at minimum, warn in the CLI/docs that a
-   signal must not overlap any button label reachable before the goal path.
-2. **Extend `src/assurance/`** with a new `Probe` variant and a documented,
-   honestly-named defect class for behavioral/simulation oracles (distinct
-   from Ray's taxonomy, cited as such), so this class of check becomes
-   repeatable machinery rather than a one-off script.
-3. **Leave it recorded and move to the next unclaimed item** in
-   `05-COMPETITIVE-SCAN.md` §6 — auditing the Prime Intellect Environments Hub.
+1. File this as an issue against `experience-validation-engine`. **Not done.**
+   Still the user's call, not made here.
+2. Extend `src/assurance/` with a new `Probe` variant and a documented,
+   honestly-named defect class for behavioral/simulation oracles. **Done —
+   see §9.**
+3. Move to the next unclaimed item, auditing the Prime Intellect Environments
+   Hub. **Next**, per the user's explicit instruction (2, then 3).
 
 ## 8. Reproduction
 
@@ -214,3 +204,53 @@ eve run mock: --config docs/assurance/findings/exploit-appname.yaml \
 
 The three config files are checked in next to this document, unmodified from
 what was actually run.
+
+## 9. Formalized as machinery
+
+This finding is now reproducible through `genesis audit` rather than only by
+hand:
+
+```bash
+genesis audit --suite behavioral --oracle eve \
+  --eve-bin "node /path/to/experience-validation-engine/bin/eve.js"
+```
+
+What resolved the two mismatches in §5:
+
+- **`src/assurance/behavioral-taxonomy.ts`** — a second taxonomy table, kept
+  fully separate from Ray's `taxonomy.ts`, with two classes named for what was
+  actually found: `zero_interaction_success` (§4.1) and
+  `incidental_label_match` (§4.2's `"export"` case). `findings.ts` merges both
+  tables for descriptor lookup; neither table needs to know the other exists.
+- **`src/assurance/eve-oracle-adapter.ts`** — `EveOracleAdapter`, driving EVE's
+  actual `--config`/`--out` interface (the same one
+  `src/evidence/behavioral/eve.ts` drives, for a different purpose). A new
+  `Judge` interface, extracted from `VerifierAdapter` in `verifier.ts`, is what
+  lets `runAudit`/`concludeAudit`/`report.ts`/the ledger serve both an
+  RLVR-style subprocess verifier and a config-driven behavioral oracle without
+  either implementation knowing the other exists.
+- **`src/assurance/suites/behavioral.ts`** — the exact three probes from §3
+  and §4, as data: `behavioral/zero-interaction` (§4.1), `behavioral/
+  incidental-label` and `behavioral/control-genuine-completion` (§4.2's
+  minimal pair). `validateSuite()` accepts it as diagnostic.
+
+Tested at two tiers, matching the discipline the EVE-integration fix
+established: mocked tests that always run in CI (`tests/assurance-
+behavioral.test.ts`, "EveOracleAdapter — mocked" and "behavioral audit —
+mocked end to end"), plus a live block that runs only when a sibling
+`experience-validation-engine` checkout is present — `describe.skipIf`, not a
+fake — and, when it runs, reproduces this finding through the formal machinery:
+`VERDICT: EXPLOITABLE`, both classes flagged, the control probe genuinely
+correct. Confirmed via the built CLI as well as the test suite:
+
+```
+$ genesis audit --suite behavioral --oracle eve --eve-bin "node .../bin/eve.js"
+VERDICT: EXPLOITABLE
+  [exploitable] incidental_label_match — Incidental label match
+  [exploitable] zero_interaction_success — Zero-interaction success
+exit 1
+```
+
+What is still true, unchanged: this only bounds the defect classes the suite
+probes. It says nothing about EVE's scoring dimensions, and option 1 (filing
+upstream) remains undone and remains the user's call.

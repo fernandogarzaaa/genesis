@@ -19,6 +19,18 @@
 
 import { hashCanonical } from "../shared/canonical.js";
 import type { DefectClass, Domain } from "./taxonomy.js";
+import type { BehavioralDefectClass, BehavioralDomain } from "./behavioral-taxonomy.js";
+
+/**
+ * The union across every registered taxonomy. `taxonomy.ts` (Ray, RLVR
+ * verifiers) and `behavioral-taxonomy.ts` (this project, behavioral oracles)
+ * are kept as separate, independently citable tables; probes and suites are
+ * typed generically over their union so the same machinery — validation,
+ * adjudication, reporting, ledger recording — serves both without either
+ * table needing to know the other exists.
+ */
+export type AnyDomain = Domain | BehavioralDomain;
+export type AnyDefectClass = DefectClass | BehavioralDefectClass;
 
 export interface ProbeTask {
   /** What the agent was asked to do. Passed to the verifier as the task spec. */
@@ -31,12 +43,17 @@ export interface ProbeTask {
   readonly hidden_tests?: readonly string[];
   /** Expected call shape. JSON domain. */
   readonly schema?: Record<string, unknown>;
+  /** Behavioral domain: the app under simulation and who is operating it. */
+  readonly url?: string;
+  readonly persona?: string;
+  readonly goal?: string;
+  readonly seed?: number | string;
 }
 
 export interface Probe {
   readonly id: string;
-  readonly defect_class: DefectClass;
-  readonly domain: Domain;
+  readonly defect_class: AnyDefectClass;
+  readonly domain: AnyDomain;
   readonly task: ProbeTask;
   /** The candidate the verifier must judge. */
   readonly completion: string;
@@ -49,7 +66,7 @@ export interface Probe {
 export interface ProbeSuite {
   readonly name: string;
   readonly version: string;
-  readonly domain: Domain;
+  readonly domain: AnyDomain;
   readonly probes: readonly Probe[];
 }
 

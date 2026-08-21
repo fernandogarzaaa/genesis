@@ -15,7 +15,7 @@ import {
   type ProbeResult,
 } from "./findings.js";
 import { suiteDigest, validateSuite, type Probe, type ProbeSuite } from "./probe.js";
-import type { VerifierAdapter } from "./verifier.js";
+import type { Judge } from "./verifier.js";
 
 export class AuditError extends Error {
   override readonly name = "AuditError";
@@ -37,7 +37,7 @@ export interface AuditRecord {
 }
 
 export interface AuditOptions {
-  readonly verifier: VerifierAdapter;
+  readonly verifier: Judge;
   readonly suite: ProbeSuite;
   readonly ledger?: Ledger;
   readonly events?: AuditEvents;
@@ -91,8 +91,7 @@ export async function runAudit(options: AuditOptions): Promise<AuditRecord> {
       hashCanonical({ verifier: verifier.name, suite_digest: digest }),
       {
         verifier: verifier.name,
-        verifier_command: verifier.config.command,
-        accept_rule: verifier.config.accept,
+        verifier_meta: verifier.describe(),
         suite: suite.name,
         suite_version: suite.version,
         suite_digest: digest,

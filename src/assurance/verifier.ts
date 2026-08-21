@@ -58,7 +58,23 @@ export interface VerifierResponse {
   readonly note: string | null;
 }
 
-export class VerifierAdapter {
+/**
+ * A Judge fires probes at some oracle and reports what it decided. Two
+ * implementations exist: `VerifierAdapter` here, for RLVR-style verifiers
+ * judging an agent-submitted completion, and `EveOracleAdapter` for EVE's
+ * behavioral oracle, whose "completion" is a candidate success-signal
+ * configuration rather than a file an agent produced. `runAudit`,
+ * `concludeAudit`, and the report renderer are written against this
+ * interface and do not know or care which kind of oracle is under test.
+ */
+export interface Judge {
+  readonly name: string;
+  judge(probe: Probe): Promise<VerifierResponse>;
+  /** Recorded verbatim with the ledger entry — command, accept rule, whatever identifies exactly what was invoked. */
+  describe(): Record<string, unknown>;
+}
+
+export class VerifierAdapter implements Judge {
   readonly #config: VerifierConfig;
   readonly #runner: Runner;
 
@@ -73,6 +89,14 @@ export class VerifierAdapter {
 
   get config(): VerifierConfig {
     return this.#config;
+  }
+
+  describe(): Record<string, unknown> {
+    return {
+      command: this.#config.command,
+      accept: this.#config.accept,
+      timeout_ms: this.#config.timeout_ms,
+    };
   }
 
   async judge(probe: Probe): Promise<VerifierResponse> {
