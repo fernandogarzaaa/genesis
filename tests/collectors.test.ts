@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { collectEvidence, makeContext } from "../src/evidence/collect.js";
@@ -7,13 +9,15 @@ import { countDiagnostics } from "../src/evidence/mechanical/lint.js";
 import { findTest, parseReport, testCollector } from "../src/evidence/mechanical/test.js";
 import { typecheckCollector } from "../src/evidence/mechanical/typecheck.js";
 import { commandCollector } from "../src/evidence/mechanical/command.js";
+import { coverageCollector } from "../src/evidence/mechanical/coverage.js";
+import { diffCollector } from "../src/evidence/mechanical/diff.js";
 import { eveCollector, parseSession } from "../src/evidence/behavioral/eve.js";
 import { CollectorRegistry } from "../src/evidence/registry.js";
 import type { RunOptions } from "../src/evidence/runner.js";
 import { criterion, contract, FakeRunner, requirement, testReport } from "./helpers.js";
 import { freezeContract } from "../src/contract/freeze.js";
 
-function ctx(runner: FakeRunner) {
+function ctx(runner: FakeRunner, overrides: Partial<Parameters<typeof makeContext>[0]> = {}) {
   return makeContext({
     repoPath: "/nonexistent-repo",
     contractHash: "deadbeef",
@@ -23,6 +27,7 @@ function ctx(runner: FakeRunner) {
     runner,
     putArtifact: () => "sha256:artifact",
     idSeed: "ev",
+    ...overrides,
   });
 }
 
@@ -40,8 +45,8 @@ describe("command collector", () => {
     );
 
     expect(record?.status).toBe("collected");
-    expect(record?.observation["exit_code"]).toBe(0);
-    expect(record?.observation["stdout_lines"]).toBe(2);
+    expect(record?.observation.exit_code).toBe(0);
+    expect(record?.observation.stdout_lines).toBe(2);
   });
 
   it("reports an error rather than a result when the command times out", async () => {
@@ -68,7 +73,7 @@ describe("command collector", () => {
       [target({ collector: "command", config: { command: ["build"], match: "succeeded" } })],
       ctx(runner),
     );
-    expect(record?.observation["matched"]).toBe(true);
+    expect(record?.observation.matched).toBe(true);
   });
 });
 
@@ -108,7 +113,7 @@ describe("test collector", () => {
       ctx(runner),
     );
 
-    expect(record?.observation["status"]).toBe("fail");
+    expect(record?.observation.status).toBe("fail");
   });
 
   it("reports a missing selector as missing rather than passing", async () => {
@@ -117,7 +122,7 @@ describe("test collector", () => {
       [target({ config: { command: ["t"], selector: "tests/auth.spec.ts::a test nobody wrote" } })],
       ctx(runner),
     );
-    expect(record?.observation["status"]).toBe("missing");
+    expect(record?.observation.status).toBe("missing");
   });
 
   // Efficiency property: a contract with many criteria must not run the suite
@@ -192,7 +197,7 @@ describe("typecheck collector", () => {
       ctx(runner),
     );
 
-    expect(record?.observation["errors"]).toBe(2);
+    expect(record?.observation.errors).toBe(2);
   });
 
   it("reports zero errors on a clean run", async () => {
@@ -201,7 +206,186 @@ describe("typecheck collector", () => {
       [target({ collector: "typecheck", config: { command: ["npx", "tsc", "--noEmit"] } })],
       ctx(runner),
     );
-    expect(record?.observation["errors"]).toBe(0);
+    expect(record?.observation.errors).toBe(0);
+  });
+});
+
+describe("diff collector", () => {
+  function git(cwd: string, args: string[]): string {
+    return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  }
+
+  function makeRepo(): { dir: string; base: string; head: string } {
+    const dir = mkdtempSync(join(tmpdir(), "genesis-diff-"));
+    git(dir, ["init", "-q", "-b", "main"]);
+    git(dir, ["config", "user.email", "test@example.com"]);
+    git(dir, ["config", "user.name", "Test"]);
+
+    mkdirSync(join(dir, "src", "auth"), { recursive: true });
+    writeFileSync(join(dir, "src", "auth", "login.ts"), "line one\n");
+    writeFileSync(join(dir, "README.md"), "# fixture\n");
+    git(dir, ["add", "."]);
+    git(dir, ["commit", "-q", "-m", "base"]);
+    const base = git(dir, ["rev-parse", "HEAD"]);
+
+    writeFileSync(join(dir, "src", "auth", "login.ts"), "line one\nline two\nline three\n");
+    writeFileSync(join(dir, "README.md"), "# fixture\nextra\n");
+    git(dir, ["add", "."]);
+    git(dir, ["commit", "-q", "-m", "head"]);
+    const head = git(dir, ["rev-parse", "HEAD"]);
+
+    return { dir, base, head };
+  }
+
+  it("observes files/insertions/deletions between base and head", async () => {
+    const repo = makeRepo();
+    try {
+      const [record] = await diffCollector.collect(
+        [target({ collector: "diff", config: {} })],
+        ctx(new FakeRunner(), { repoPath: repo.dir, baseCommit: repo.base, headCommit: repo.head }),
+      );
+
+      expect(record?.status).toBe("collected");
+      expect(record?.observation.files_changed).toBe(2);
+      expect(record?.observation.insertions).toBe(3);
+      expect(record?.observation.total_changes).toBe(3);
+    } finally {
+      rmSync(repo.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags watched paths that were touched", async () => {
+    const repo = makeRepo();
+    try {
+      const [record] = await diffCollector.collect(
+        [target({ collector: "diff", config: { watched_paths: ["src/auth/"] } })],
+        ctx(new FakeRunner(), { repoPath: repo.dir, baseCommit: repo.base, headCommit: repo.head }),
+      );
+
+      expect(record?.observation.touches_watched_paths).toBe(true);
+      expect(record?.observation.watched_paths_touched).toBe(1);
+    } finally {
+      rmSync(repo.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports touches_watched_paths as false when the watched area is untouched", async () => {
+    const repo = makeRepo();
+    try {
+      const [record] = await diffCollector.collect(
+        [target({ collector: "diff", config: { watched_paths: ["migrations/"] } })],
+        ctx(new FakeRunner(), { repoPath: repo.dir, baseCommit: repo.base, headCommit: repo.head }),
+      );
+
+      expect(record?.observation.touches_watched_paths).toBe(false);
+      expect(record?.observation.watched_paths_touched).toBe(0);
+    } finally {
+      rmSync(repo.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("errors rather than fabricating a diff when the path is not a git repository", async () => {
+    const [record] = await diffCollector.collect(
+      [target({ collector: "diff", config: {} })],
+      ctx(new FakeRunner()),
+    );
+    expect(record?.status).toBe("error");
+    expect(record?.detail[0]).toContain("not a git repository");
+  });
+});
+
+describe("coverage collector", () => {
+  let dir: string;
+
+  function writeSummary(name: string, linesPct: number): void {
+    writeFileSync(
+      join(dir, name),
+      JSON.stringify({
+        total: {
+          lines: { pct: linesPct },
+          statements: { pct: linesPct },
+          functions: { pct: linesPct },
+          branches: { pct: linesPct },
+        },
+      }),
+    );
+  }
+
+  it("reads lines/statements/functions/branches percentages from a summary file", async () => {
+    dir = mkdtempSync(join(tmpdir(), "genesis-coverage-"));
+    try {
+      writeSummary("coverage-summary.json", 87.5);
+      const [record] = await coverageCollector.collect(
+        [target({ collector: "coverage", config: { summary_path: "coverage-summary.json" } })],
+        ctx(new FakeRunner(), { repoPath: dir }),
+      );
+
+      expect(record?.status).toBe("collected");
+      expect(record?.observation.lines_pct).toBe(87.5);
+      expect(record?.observation.statements_pct).toBe(87.5);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("computes a delta against a base summary when one is configured", async () => {
+    dir = mkdtempSync(join(tmpdir(), "genesis-coverage-"));
+    try {
+      writeSummary("head.json", 90);
+      writeSummary("base.json", 80);
+      const [record] = await coverageCollector.collect(
+        [
+          target({
+            collector: "coverage",
+            config: { summary_path: "head.json", base_summary_path: "base.json" },
+          }),
+        ],
+        ctx(new FakeRunner(), { repoPath: dir }),
+      );
+
+      expect(record?.observation.lines_pct_delta).toBe(10);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("omits the delta rather than fabricating one when no base summary is available", async () => {
+    dir = mkdtempSync(join(tmpdir(), "genesis-coverage-"));
+    try {
+      writeSummary("head.json", 90);
+      const [record] = await coverageCollector.collect(
+        [
+          target({
+            collector: "coverage",
+            config: { summary_path: "head.json", base_summary_path: "missing.json" },
+          }),
+        ],
+        ctx(new FakeRunner(), { repoPath: dir }),
+      );
+
+      expect(record?.observation.lines_pct_delta).toBeUndefined();
+      expect(record?.detail.some((d) => d.includes("no base summary"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("errors when config.summary_path is missing", async () => {
+    const [record] = await coverageCollector.collect(
+      [target({ collector: "coverage", config: {} })],
+      ctx(new FakeRunner()),
+    );
+    expect(record?.status).toBe("error");
+    expect(record?.detail[0]).toContain("config.summary_path");
+  });
+
+  it("errors when the configured summary file cannot be read", async () => {
+    const [record] = await coverageCollector.collect(
+      [target({ collector: "coverage", config: { summary_path: "does-not-exist.json" } })],
+      ctx(new FakeRunner()),
+    );
+    expect(record?.status).toBe("error");
+    expect(record?.detail[0]).toContain("could not read a coverage summary");
   });
 });
 
