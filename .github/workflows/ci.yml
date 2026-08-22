@@ -24,5 +24,41 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint
+        run: npm run lint
+
       - name: Test
         run: npm run test
+
+      # Typecheck runs tsc --noEmit against the root tsconfig (which also
+      # includes tests/**), so a change can typecheck clean without ever
+      # exercising tsconfig.build.json's rootDir/outDir — the config that
+      # actually produces dist/, which bin/genesis.js imports at runtime.
+      # Without this step, a build-only failure would merge undetected and
+      # only surface when someone ran the published binary.
+      - name: Build
+        run: npm run build
+
+      # Proves the built entrypoint actually resolves and executes, not just
+      # that `tsc` exited zero. bin/genesis.js does `import "../dist/cli/run.js"`
+      # — this is what would have caught dist/ being absent or malformed.
+      - name: Smoke test built CLI
+        run: node bin/genesis.js --help
+
+  hub-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/hub-audit
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Test
+        run: pytest -q
