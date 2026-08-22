@@ -23,7 +23,7 @@ import { adjudicate, type PreRegistrationFacts } from "../adjudicator/index.js";
 import type { FrozenContract } from "../contract/schema.js";
 import { filterAdmissible } from "../evidence/admissibility.js";
 import type { Evidence } from "../evidence/envelope.js";
-import { Ledger, type OutcomeLabel, type OutcomePayload } from "../ledger/ledger.js";
+import type { Ledger, OutcomeLabel, OutcomePayload } from "../ledger/ledger.js";
 import {
   summarize,
   type BacktestCase,

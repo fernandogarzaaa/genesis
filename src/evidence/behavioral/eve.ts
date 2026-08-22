@@ -240,7 +240,7 @@ export function parseSession(text: string): SessionResult | null {
     try {
       const parsed = JSON.parse(candidate) as Record<string, unknown>;
       // EVE's CLI may wrap the session under `result`.
-      const session = (parsed["result"] ?? parsed) as SessionResult;
+      const session = (parsed.result ?? parsed) as SessionResult;
       if (session && typeof session === "object" && ("goalAchieved" in session || "findings" in session)) {
         return session;
       }

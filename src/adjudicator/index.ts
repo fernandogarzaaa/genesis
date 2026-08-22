@@ -256,7 +256,7 @@ function evaluateRequirement(
   // R1 mitigation: a criterion whose only passing evidence comes from a test
   // introduced or modified in the diff under evaluation is self-certifying.
   // It caps at unproven rather than satisfying anything.
-  if (record.observation["evidence_authored_in_diff"] === true) {
+  if (record.observation.evidence_authored_in_diff === true) {
     return {
       ...base,
       ...cite,

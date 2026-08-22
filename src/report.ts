@@ -71,7 +71,9 @@ export function renderVerdict(
   const remediation = suggestRemediation(adjudication);
   if (remediation.length > 0) {
     lines.push("SUGGESTED REMEDIATION (advisory — does not affect the verdict above)");
-    remediation.forEach((item, i) => lines.push(`  ${i + 1}. ${wrap(item, 74, "     ")}`));
+    remediation.forEach((item, i) => {
+      lines.push(`  ${i + 1}. ${wrap(item, 74, "     ")}`);
+    });
     lines.push("");
   }
 
