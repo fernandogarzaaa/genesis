@@ -16,7 +16,7 @@ import { resolveRef } from "./evidence/git.js";
 import { checkPreRegistration } from "./evidence/preregistration.js";
 import type { CollectorRegistry } from "./evidence/registry.js";
 import { computeEnvDigest, SubprocessRunner, type Runner } from "./evidence/runner.js";
-import { Ledger } from "./ledger/ledger.js";
+import type { Ledger } from "./ledger/ledger.js";
 
 export class VerifyError extends Error {
   override readonly name = "VerifyError";

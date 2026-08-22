@@ -20,6 +20,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",
@@ -45,6 +47,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.10",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24.10.1",
     "@vitest/coverage-v8": "^4.1.10",

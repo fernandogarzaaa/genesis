@@ -173,7 +173,7 @@ function buildOne(
 
   if (selector !== undefined) {
     const found = findTest(report, selector);
-    observation["status"] = found?.status ?? "missing";
+    observation.status = found?.status ?? "missing";
 
     if (found === null) {
       detail.push(`no test matched selector "${selector}"`);
@@ -182,7 +182,7 @@ function buildOne(
       if (found.file) {
         const rel = toRepoRelative(ctx.repoPath, found.file);
         const authored = touchedFiles().includes(rel);
-        observation["evidence_authored_in_diff"] = authored;
+        observation.evidence_authored_in_diff = authored;
         if (authored) {
           detail.push(
             `${rel} was introduced or modified in this diff — self-authored proof cannot satisfy a criterion`,
@@ -192,7 +192,7 @@ function buildOne(
     }
   }
 
-  if (observation["failed"] !== 0) {
+  if (observation.failed !== 0) {
     detail.push(...failedNames(report).slice(0, 8).map((n) => `failed: ${n}`));
   }
 

@@ -102,14 +102,14 @@ export const coverageCollector: Collector = {
         branches_pct: pct(head, "branches"),
       };
 
-      const detail = [`lines ${observation["lines_pct"]}%`];
+      const detail = [`lines ${observation.lines_pct}%`];
 
       const basePath = configString(target.requirement, "base_summary_path");
       if (basePath) {
         const base = readSummary(ctx.repoPath, basePath);
         if (base) {
           const delta = round(pct(head, "lines") - pct(base, "lines"));
-          observation["lines_pct_delta"] = delta;
+          observation.lines_pct_delta = delta;
           detail.push(`${pct(base, "lines")}% → ${pct(head, "lines")}% (delta ${delta >= 0 ? "+" : ""}${delta}pp)`);
         } else {
           detail.push(`no base summary at ${basePath}; delta metrics are unavailable`);

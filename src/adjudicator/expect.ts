@@ -24,7 +24,7 @@ export function evaluateExpectation(
   expectation: Expectation,
   observation: Readonly<Record<string, ObservedValue>>,
 ): ExpectationResult {
-  const observed = Object.prototype.hasOwnProperty.call(observation, expectation.metric)
+  const observed = Object.hasOwn(observation, expectation.metric)
     ? observation[expectation.metric]
     : undefined;
 

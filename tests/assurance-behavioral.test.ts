@@ -139,7 +139,7 @@ describe("EveOracleAdapter — mocked", () => {
 
   it("describes itself for ledger recording", () => {
     const description = adapter(new EveFakeRunner(true)).describe();
-    expect(description["bin"]).toEqual(["fake-eve"]);
+    expect(description.bin).toEqual(["fake-eve"]);
   });
 });
 

@@ -108,7 +108,7 @@ export function evidenceFromRun(
     } catch {
       matched = false;
     }
-    observation["matched"] = matched;
+    observation.matched = matched;
   }
 
   return buildEvidence({

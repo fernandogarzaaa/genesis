@@ -60,7 +60,7 @@ export const diffCollector: Collector = {
     const ended_at = now();
 
     return targets.map((target) => {
-      const watched = readWatchedPaths(target.requirement.config["watched_paths"]);
+      const watched = readWatchedPaths(target.requirement.config.watched_paths);
       const touched = files.filter((f) => watched.some((w) => f.startsWith(w)));
 
       const observation: Record<string, ObservedValue> = {

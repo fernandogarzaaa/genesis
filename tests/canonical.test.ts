@@ -68,7 +68,7 @@ describe("canonicalize", () => {
 
   it("rejects circular references instead of hanging", () => {
     const obj: Record<string, unknown> = { a: 1 };
-    obj["self"] = obj;
+    obj.self = obj;
     expect(() => canonicalize(obj)).toThrow(CanonicalizationError);
   });
 });
