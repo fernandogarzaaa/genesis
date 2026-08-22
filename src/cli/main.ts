@@ -17,7 +17,7 @@ import type { FrozenContract } from "../contract/schema.js";
 import { defaultRegistry } from "../evidence/collectors.js";
 import { resolveRef } from "../evidence/git.js";
 import { Ledger, type OutcomeLabel } from "../ledger/ledger.js";
-import { backtestDataset, backtestLedger, type DatasetCase } from "../backtest/index.js";
+import { backtestDataset, backtestLedger, type BacktestReport, type DatasetCase } from "../backtest/index.js";
 import { formatInterval, type BacktestSummary } from "../backtest/metrics.js";
 import { renderVerdict } from "../report.js";
 import { EXIT_CODES, exitCodeFor, verify, VerifyError } from "../verify.js";
@@ -301,6 +301,16 @@ async function cmdVerify(argv: readonly string[]): Promise<number> {
   if (!values.contract) return usageError("--contract is required");
 
   const contract = readJson(values.contract) as FrozenContract;
+
+  const validation = validateContract(contract, defaultRegistry().names());
+  if (!validation.ok) {
+    for (const error of validation.errors) {
+      process.stderr.write(`error  ${error.path}: ${error.message}\n`);
+    }
+    process.stderr.write("\nRefusing to verify an invalid contract.\n");
+    return EXIT_CODES.INTERNAL_ERROR;
+  }
+
   const ledger = openLedger(values.ledger);
 
   try {
@@ -471,10 +481,30 @@ function cmdBacktest(argv: readonly string[]): number {
     allowPositionals: false,
   });
 
-  let report;
+  let report: BacktestReport;
 
   if (values.dataset) {
-    const cases = readJsonl(values.dataset) as DatasetCase[];
+    const rows = readJsonl(values.dataset);
+    const problems: string[] = [];
+    const cases: DatasetCase[] = [];
+
+    rows.forEach((row, i) => {
+      const issues = validateDatasetCase(row, defaultRegistry().names());
+      if (issues.length > 0) {
+        for (const issue of issues) problems.push(`row ${i} (${values.dataset}): ${issue}`);
+      } else {
+        cases.push(row as DatasetCase);
+      }
+    });
+
+    if (problems.length > 0) {
+      for (const problem of problems) process.stderr.write(`error  ${problem}\n`);
+      process.stderr.write(
+        `\n${problems.length} problem(s) found in ${values.dataset}. Refusing to backtest an invalid dataset.\n`,
+      );
+      return EXIT_CODES.INTERNAL_ERROR;
+    }
+
     report = backtestDataset(cases);
   } else {
     const ledger = openLedger(values.ledger);
@@ -532,6 +562,88 @@ function printSummary(summary: BacktestSummary): void {
     for (const caveat of summary.caveats) out.write(`    · ${caveat}\n`);
   }
   out.write("\n");
+}
+
+const EVIDENCE_KINDS = ["mechanical", "behavioral", "judgmental"];
+const COLLECTION_STATUSES = ["collected", "flaky", "error", "not_run"];
+
+/**
+ * Minimal runtime shape-check for one `--dataset` row. A malformed row must be
+ * reported as "row N: <what>", never surfaced as a raw TypeError three layers
+ * deep inside the adjudicator.
+ */
+function validateDatasetCase(row: unknown, knownCollectors: readonly string[]): string[] {
+  if (typeof row !== "object" || row === null || Array.isArray(row)) {
+    return ["not a JSON object"];
+  }
+  const r = row as Record<string, unknown>;
+  const issues: string[] = [];
+
+  if (typeof r.id !== "string" || r.id === "") {
+    issues.push('"id" must be a non-empty string');
+  }
+
+  if (typeof r.contract !== "object" || r.contract === null) {
+    issues.push('"contract" must be an object (a FrozenContract)');
+  } else {
+    const validation = validateContract(r.contract, knownCollectors);
+    for (const error of validation.errors) {
+      issues.push(`contract.${error.path}: ${error.message}`);
+    }
+  }
+
+  if (!Array.isArray(r.evidence)) {
+    issues.push('"evidence" must be an array');
+  } else {
+    r.evidence.forEach((item, i) => {
+      for (const issue of validateEvidenceShape(item)) issues.push(`evidence[${i}]: ${issue}`);
+    });
+  }
+
+  if (typeof r.outcome !== "string" || !OUTCOMES.includes(r.outcome as OutcomeLabel)) {
+    issues.push(`"outcome" must be one of: ${OUTCOMES.join(", ")}`);
+  }
+
+  return issues;
+}
+
+/** Field-level shape check for one entry of a dataset row's `evidence` array. */
+function validateEvidenceShape(item: unknown): string[] {
+  if (typeof item !== "object" || item === null || Array.isArray(item)) {
+    return ["must be an object (an Evidence envelope)"];
+  }
+  const e = item as Record<string, unknown>;
+  const issues: string[] = [];
+
+  for (const field of ["evidence_id", "contract_hash", "criterion_id", "requirement_id"]) {
+    if (typeof e[field] !== "string" || e[field] === "") {
+      issues.push(`"${field}" must be a non-empty string`);
+    }
+  }
+
+  if (typeof e.kind !== "string" || !EVIDENCE_KINDS.includes(e.kind)) {
+    issues.push(`"kind" must be one of: ${EVIDENCE_KINDS.join(", ")}`);
+  }
+  if (typeof e.status !== "string" || !COLLECTION_STATUSES.includes(e.status)) {
+    issues.push(`"status" must be one of: ${COLLECTION_STATUSES.join(", ")}`);
+  }
+  if (typeof e.observation !== "object" || e.observation === null || Array.isArray(e.observation)) {
+    issues.push('"observation" must be an object');
+  }
+  if (!Array.isArray(e.detail) || e.detail.some((d: unknown) => typeof d !== "string")) {
+    issues.push('"detail" must be an array of strings');
+  }
+  if (typeof e.collector !== "object" || e.collector === null) {
+    issues.push('"collector" must be an object with name/version/adapter_version');
+  }
+  if (typeof e.provenance !== "object" || e.provenance === null) {
+    issues.push('"provenance" must be an object');
+  }
+  if (e.artifact_digest !== null && typeof e.artifact_digest !== "string") {
+    issues.push('"artifact_digest" must be a string or null');
+  }
+
+  return issues;
 }
 
 // ── audit ───────────────────────────────────────────────────────────────────
