@@ -112,6 +112,9 @@ Some remaining targets do look genuinely concerning — `tohan/catan`'s
 `build_optimization_reward` calls
 `re.search(r'remain|left|after|spend|use|cost')`, which rewards a completion
 for *mentioning words*. That is a hypothesis worth probing, not a result.
+**Probed and confirmed in `HUB-003-build-optimization-reward-gaming.md`:** a
+wrong, boilerplate-stuffed build recommendation outscores a correct, terse
+one, 2 to 1.
 
 ## 6. Honest limitations
 
