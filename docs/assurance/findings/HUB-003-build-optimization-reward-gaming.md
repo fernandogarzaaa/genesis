@@ -135,7 +135,10 @@ would need to probe all six.
 2. Probe the environment's other five reward functions for the same pattern,
    and/or extend `tools/hub-audit/dynamic_probe.py` from a one-off CLI into
    a suite runnable against `ast_signatures.py`'s existing 47 static targets.
-   **Not done**, reasonable next increment.
+   **Partially done:** `HUB-004-carcassonne-placement-reward-defects.md`
+   confirmed a second target this way, but by hand rather than via a
+   generalized synthesizer — see that finding's §7 for why full automation
+   was rejected for now.
 3. Move to the next unclaimed item.
 
 ## 7. Reproduction
