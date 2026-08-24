@@ -18,9 +18,6 @@ jobs:
 
       - run: npm ci
 
-      # Covers every TypeScript file in the repository. The v1 kernel was
-      # excluded from this command by a root-config scope mismatch, which is
-      # why three unresolvable imports went unnoticed. See docs/v2/00-AUDIT.md.
       - name: Typecheck
         run: npm run typecheck
 
