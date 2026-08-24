@@ -2,56 +2,24 @@
  * Genesis CLI.
  *
  * Exit codes are distinct on purpose: a CI integration must be able to block on
- * NOT READY and route HUMAN REVIEW to a person without parsing stdout, and
- * Genesis failing (3) must never be confusable with a repository failing.
+ * EXPLOITABLE without parsing stdout, and Genesis failing (3) must never be
+ * confusable with a verifier failing.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { ADJUDICATOR_VERSION } from "../adjudicator/index.js";
-import { amendContract, draftContract, freezeContract } from "../contract/freeze.js";
-import { validateContract } from "../contract/validate.js";
-import type { FrozenContract } from "../contract/schema.js";
-import { defaultRegistry } from "../evidence/collectors.js";
-import { resolveRef } from "../evidence/git.js";
-import { Ledger, type OutcomeLabel } from "../ledger/ledger.js";
-import { backtestDataset, backtestLedger, type BacktestReport, type DatasetCase } from "../backtest/index.js";
-import { formatInterval, type BacktestSummary } from "../backtest/metrics.js";
-import { renderVerdict } from "../report.js";
-import { EXIT_CODES, exitCodeFor, verify, VerifyError } from "../verify.js";
-import { AuditError, exitCodeFor as auditExitCode, runAudit } from "../assurance/audit.js";
+import { AuditError, AUDIT_EXIT, exitCodeFor as auditExitCode, runAudit } from "../assurance/audit.js";
 import { EveOracleAdapter } from "../assurance/eve-oracle-adapter.js";
 import { renderAudit } from "../assurance/report.js";
 import { getSuite, suiteNames } from "../assurance/suites/index.js";
 import { ALL_DESCRIPTORS } from "../assurance/findings.js";
 import { VerifierAdapter, type AcceptRule, type Judge } from "../assurance/verifier.js";
 import { SubprocessRunner } from "../evidence/runner.js";
+import { Ledger } from "../ledger/ledger.js";
 
 const VERSION = "0.1.0";
-const DEFAULT_LEDGER = ".genesis/ledger.db";
 
-const USAGE = `genesis ${VERSION} — the acceptance layer for machine-authored work
-
-  genesis contract init      --objective <text|@file> [--repo .] [--base <ref>] [--out contract.json]
-  genesis contract validate  --contract <file>
-  genesis contract freeze    --contract <file> [--ledger <db>] [--out <file>]
-  genesis contract amend     --contract <file> --reason <text> --author <name> [--ledger <db>]
-
-  genesis verify             --contract <file> [--repo .] [--head HEAD] [--ledger <db>] [--json]
-                             exit 0 = SHIP · 1 = NOT READY · 2 = HUMAN REVIEW · 3 = internal error
-
-  genesis label              --contract <hash> --outcome <merged_clean|reverted|hotfixed|rejected>
-                             [--source <manual|github_webhook|backfill>] [--ledger <db>]
-
-  genesis ledger verify      [--ledger <db>]
-  genesis ledger export      [--ledger <db>]
-  genesis ledger show        --contract <hash> [--ledger <db>]
-
-  genesis backtest           [--from-ledger | --dataset <file.jsonl>] [--ledger <db>] [--json]
-
-  genesis collectors         list registered evidence collectors
+const USAGE = `genesis ${VERSION} — audits verifiers, not artifacts
 
   genesis audit              --suite <code|json|math|behavioral> [--ledger <db>] [--json] [--verbose]
                              and exactly one of:
@@ -65,7 +33,7 @@ const USAGE = `genesis ${VERSION} — the acceptance layer for machine-authored 
 `;
 
 export async function main(argv: readonly string[]): Promise<number> {
-  const [command, subcommand] = argv;
+  const [command] = argv;
 
   try {
     switch (command) {
@@ -78,26 +46,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 
       case "-v":
       case "--version":
-        process.stdout.write(`genesis ${VERSION} (adjudicator ${ADJUDICATOR_VERSION})\n`);
-        return 0;
-
-      case "contract":
-        return cmdContract(subcommand, argv.slice(2));
-
-      case "verify":
-        return await cmdVerify(argv.slice(1));
-
-      case "label":
-        return cmdLabel(argv.slice(1));
-
-      case "ledger":
-        return cmdLedger(subcommand, argv.slice(2));
-
-      case "backtest":
-        return cmdBacktest(argv.slice(1));
-
-      case "collectors":
-        for (const name of defaultRegistry().names()) process.stdout.write(`${name}\n`);
+        process.stdout.write(`genesis ${VERSION}\n`);
         return 0;
 
       case "audit":
@@ -109,541 +58,13 @@ export async function main(argv: readonly string[]): Promise<number> {
       default:
         fail(`unknown command "${command}"`);
         process.stderr.write(USAGE);
-        return EXIT_CODES.INTERNAL_ERROR;
+        return AUDIT_EXIT.INTERNAL_ERROR;
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     fail(message);
-    return EXIT_CODES.INTERNAL_ERROR;
+    return AUDIT_EXIT.INTERNAL_ERROR;
   }
-}
-
-// ── contract ────────────────────────────────────────────────────────────────
-
-function cmdContract(subcommand: string | undefined, argv: readonly string[]): number {
-  switch (subcommand) {
-    case "init": {
-      const { values } = parseArgs({
-        args: [...argv],
-        options: {
-          objective: { type: "string" },
-          repo: { type: "string", default: "." },
-          base: { type: "string", default: "HEAD" },
-          out: { type: "string", default: "contract.json" },
-          provenance: { type: "string", default: "pre_registered" },
-        },
-        allowPositionals: false,
-      });
-
-      if (!values.objective) return usageError("--objective is required");
-
-      const repoPath = resolve(values.repo ?? ".");
-      const baseCommit = resolveRef(repoPath, values.base ?? "HEAD") ?? values.base ?? "HEAD";
-
-      const contract = draftContract({
-        objective: readInline(values.objective),
-        baseCommit,
-        provenance: values.provenance === "reconstructed" ? "reconstructed" : "pre_registered",
-      });
-
-      writeJson(values.out ?? "contract.json", contract);
-      process.stdout.write(
-        `Draft contract written to ${values.out}\n` +
-          `Base commit: ${baseCommit.slice(0, 12)}\n\n` +
-          "Replace the EXAMPLE criterion with falsifiable ones, then run:\n" +
-          `  genesis contract validate --contract ${values.out}\n` +
-          `  genesis contract freeze   --contract ${values.out}\n\n` +
-          "Freeze before implementation begins. Genesis will not certify a contract\n" +
-          "it cannot prove came first.\n",
-      );
-      return 0;
-    }
-
-    case "validate": {
-      const { values } = parseArgs({
-        args: [...argv],
-        options: { contract: { type: "string" } },
-        allowPositionals: false,
-      });
-      if (!values.contract) return usageError("--contract is required");
-
-      const result = validateContract(readJson(values.contract), defaultRegistry().names());
-
-      for (const warning of result.warnings) {
-        process.stdout.write(`warning  ${warning.path}: ${warning.message}\n`);
-      }
-      for (const error of result.errors) {
-        process.stderr.write(`error    ${error.path}: ${error.message}\n`);
-      }
-
-      if (!result.ok) {
-        process.stderr.write(`\n${result.errors.length} error(s). Contract is not valid.\n`);
-        return EXIT_CODES.INTERNAL_ERROR;
-      }
-
-      const criteria = result.contract?.criteria.length ?? 0;
-      const binding = result.contract?.criteria.filter((c) => c.binding).length ?? 0;
-      process.stdout.write(`\nValid. ${criteria} criteria (${binding} binding), ${result.warnings.length} warning(s).\n`);
-      return 0;
-    }
-
-    case "freeze": {
-      const { values } = parseArgs({
-        args: [...argv],
-        options: {
-          contract: { type: "string" },
-          ledger: { type: "string", default: DEFAULT_LEDGER },
-          out: { type: "string" },
-        },
-        allowPositionals: false,
-      });
-      if (!values.contract) return usageError("--contract is required");
-
-      const validation = validateContract(readJson(values.contract), defaultRegistry().names());
-      if (!validation.ok || !validation.contract) {
-        for (const error of validation.errors) {
-          process.stderr.write(`error  ${error.path}: ${error.message}\n`);
-        }
-        process.stderr.write("\nRefusing to freeze an invalid contract.\n");
-        return EXIT_CODES.INTERNAL_ERROR;
-      }
-
-      const frozen = freezeContract(validation.contract);
-      const ledger = openLedger(values.ledger);
-      try {
-        const entry = ledger.registerContract(frozen);
-        writeJson(values.out ?? values.contract, frozen);
-        process.stdout.write(
-          `Frozen.\n` +
-            `  contract_hash  ${frozen.contract_hash}\n` +
-            `  base_commit    ${frozen.repo.base_commit}\n` +
-            `  ledger entry   ${entry.entry_hash.slice(0, 16)} (seq ${entry.seq})\n` +
-            `  provenance     ${frozen.provenance}\n`,
-        );
-        return 0;
-      } finally {
-        ledger.close();
-      }
-    }
-
-    case "amend": {
-      const { values } = parseArgs({
-        args: [...argv],
-        options: {
-          contract: { type: "string" },
-          reason: { type: "string" },
-          author: { type: "string" },
-          ledger: { type: "string", default: DEFAULT_LEDGER },
-          out: { type: "string" },
-        },
-        allowPositionals: false,
-      });
-      if (!values.contract) return usageError("--contract is required");
-      if (!values.reason) return usageError("--reason is required; amendments are never silent");
-      if (!values.author) return usageError("--author is required");
-
-      const prior = readJson(values.contract) as FrozenContract;
-      if (!prior.contract_hash) return usageError("that contract has not been frozen, so there is nothing to amend");
-
-      const validation = validateContract(prior, defaultRegistry().names());
-      if (!validation.ok || !validation.contract) {
-        for (const error of validation.errors) {
-          process.stderr.write(`error  ${error.path}: ${error.message}\n`);
-        }
-        return EXIT_CODES.INTERNAL_ERROR;
-      }
-
-      const amended = amendContract(prior, validation.contract, {
-        reason: values.reason,
-        author: values.author,
-        at: new Date().toISOString(),
-      });
-
-      const ledger = openLedger(values.ledger);
-      try {
-        const entry = ledger.registerContract(amended);
-        writeJson(values.out ?? values.contract, amended);
-        process.stdout.write(
-          `Amended.\n` +
-            `  contract_hash  ${amended.contract_hash}\n` +
-            `  supersedes     ${amended.supersedes}\n` +
-            `  ledger entry   ${entry.entry_hash.slice(0, 16)} (seq ${entry.seq})\n\n` +
-            "The prior contract keeps its hash and its entry. If this amendment lands after\n" +
-            "implementation began, the verdict ceiling drops to HUMAN REVIEW.\n",
-        );
-        return 0;
-      } finally {
-        ledger.close();
-      }
-    }
-
-    default:
-      return usageError(`unknown subcommand "contract ${subcommand ?? ""}"`);
-  }
-}
-
-// ── verify ──────────────────────────────────────────────────────────────────
-
-async function cmdVerify(argv: readonly string[]): Promise<number> {
-  const { values } = parseArgs({
-    args: [...argv],
-    options: {
-      contract: { type: "string" },
-      repo: { type: "string", default: "." },
-      head: { type: "string", default: "HEAD" },
-      ledger: { type: "string", default: DEFAULT_LEDGER },
-      json: { type: "boolean", default: false },
-      quiet: { type: "boolean", default: false },
-    },
-    allowPositionals: false,
-  });
-
-  if (!values.contract) return usageError("--contract is required");
-
-  const contract = readJson(values.contract) as FrozenContract;
-
-  const validation = validateContract(contract, defaultRegistry().names());
-  if (!validation.ok) {
-    for (const error of validation.errors) {
-      process.stderr.write(`error  ${error.path}: ${error.message}\n`);
-    }
-    process.stderr.write("\nRefusing to verify an invalid contract.\n");
-    return EXIT_CODES.INTERNAL_ERROR;
-  }
-
-  const ledger = openLedger(values.ledger);
-
-  try {
-    const result = await verify({
-      repoPath: resolve(values.repo ?? "."),
-      contract,
-      ledger,
-      registry: defaultRegistry(),
-      head: values.head,
-      events: values.quiet || values.json
-        ? {}
-        : {
-            onCollectorStart: (name, n) => process.stderr.write(`  collecting ${name} (${n} requirement(s))…\n`),
-            onCollectorFinish: (name, produced, ms) =>
-              process.stderr.write(`  ${name}: ${produced} record(s) in ${ms}ms\n`),
-            onCollectorError: (name, error) => process.stderr.write(`  ${name} failed: ${error.message}\n`),
-          },
-    });
-
-    if (values.json) {
-      process.stdout.write(`${JSON.stringify(
-        {
-          verdict: result.adjudication.verdict,
-          contract_hash: contract.contract_hash,
-          head_commit: result.headCommit,
-          adjudicator_version: result.adjudication.adjudicator_version,
-          criteria: result.adjudication.criteria,
-          rationale: result.adjudication.rationale,
-          counts: result.adjudication.counts,
-          pre_registration: result.preRegistration,
-          inadmissible: result.rejected.map((r) => ({ evidence_id: r.evidence.evidence_id, reason: r.reason })),
-          ledger_entry: result.verdictEntryHash,
-        },
-        null,
-        2,
-      )}\n`);
-    } else {
-      process.stdout.write(renderVerdict(contract, result, { color: process.stdout.isTTY === true }));
-    }
-
-    return exitCodeFor(result.adjudication.verdict);
-  } catch (error) {
-    if (error instanceof VerifyError) {
-      fail(error.message);
-      return EXIT_CODES.INTERNAL_ERROR;
-    }
-    throw error;
-  } finally {
-    ledger.close();
-  }
-}
-
-// ── label ───────────────────────────────────────────────────────────────────
-
-const OUTCOMES: readonly OutcomeLabel[] = ["merged_clean", "reverted", "hotfixed", "rejected"];
-
-function cmdLabel(argv: readonly string[]): number {
-  const { values } = parseArgs({
-    args: [...argv],
-    options: {
-      contract: { type: "string" },
-      outcome: { type: "string" },
-      source: { type: "string", default: "manual" },
-      detail: { type: "string" },
-      ledger: { type: "string", default: DEFAULT_LEDGER },
-    },
-    allowPositionals: false,
-  });
-
-  if (!values.contract) return usageError("--contract is required (the contract hash)");
-  if (!values.outcome || !OUTCOMES.includes(values.outcome as OutcomeLabel)) {
-    return usageError(`--outcome must be one of: ${OUTCOMES.join(", ")}`);
-  }
-
-  const ledger = openLedger(values.ledger);
-  try {
-    const existing = ledger.entries({ type: "OUTCOME_LABELED", contract_hash: values.contract });
-    const priorHash = existing.at(-1)?.entry_hash ?? null;
-
-    const entry = ledger.labelOutcome(values.contract, {
-      label: values.outcome as OutcomeLabel,
-      label_source: (values.source ?? "manual") as "manual" | "github_webhook" | "backfill",
-      verdict_entry_hash:
-        ledger.entries({ type: "VERDICT_RENDERED", contract_hash: values.contract }).at(-1)?.entry_hash ?? null,
-      detail: values.detail ? { note: values.detail } : {},
-      supersedes: priorHash,
-    });
-
-    process.stdout.write(
-      `Labeled ${values.contract.slice(0, 12)} as ${values.outcome}` +
-        (priorHash ? " (supersedes an earlier label; the earlier one stays in the chain)" : "") +
-        `\n  ledger entry ${entry.entry_hash.slice(0, 16)} (seq ${entry.seq})\n`,
-    );
-    return 0;
-  } finally {
-    ledger.close();
-  }
-}
-
-// ── ledger ──────────────────────────────────────────────────────────────────
-
-function cmdLedger(subcommand: string | undefined, argv: readonly string[]): number {
-  const { values } = parseArgs({
-    args: [...argv],
-    options: { ledger: { type: "string", default: DEFAULT_LEDGER }, contract: { type: "string" } },
-    allowPositionals: false,
-  });
-
-  const ledger = openLedger(values.ledger);
-  try {
-    switch (subcommand) {
-      case "verify": {
-        const result = ledger.verifyChain();
-        if (result.ok) {
-          process.stdout.write(
-            `Chain intact. ${result.entries} entries.\n` +
-              (result.head ? `Head: ${result.head}\n` : "Ledger is empty.\n"),
-          );
-          return 0;
-        }
-        process.stderr.write(
-          `CHAIN BROKEN at seq ${result.brokenAt}\n  ${result.reason}\n\n` +
-            "Entries at or after this point cannot be trusted. Restore from an export\n" +
-            "(`genesis ledger export`) taken before the break.\n",
-        );
-        return EXIT_CODES.INTERNAL_ERROR;
-      }
-
-      case "export":
-        for (const line of ledger.exportJsonl()) process.stdout.write(`${line}\n`);
-        return 0;
-
-      case "show": {
-        if (!values.contract) return usageError("--contract is required (the contract hash)");
-        const entries = ledger.entries({ contract_hash: values.contract });
-        if (entries.length === 0) {
-          process.stderr.write(`No ledger entries for contract ${values.contract}\n`);
-          return EXIT_CODES.INTERNAL_ERROR;
-        }
-        for (const entry of entries) {
-          process.stdout.write(
-            `seq ${String(entry.seq).padStart(6)}  ${entry.entry_type.padEnd(20)}  ` +
-              `${entry.entry_hash.slice(0, 16)}  ${new Date(entry.recorded_at).toISOString()}\n`,
-          );
-        }
-        return 0;
-      }
-
-      default:
-        return usageError(`unknown subcommand "ledger ${subcommand ?? ""}"`);
-    }
-  } finally {
-    ledger.close();
-  }
-}
-
-// ── backtest ────────────────────────────────────────────────────────────────
-
-function cmdBacktest(argv: readonly string[]): number {
-  const { values } = parseArgs({
-    args: [...argv],
-    options: {
-      dataset: { type: "string" },
-      "from-ledger": { type: "boolean", default: false },
-      ledger: { type: "string", default: DEFAULT_LEDGER },
-      json: { type: "boolean", default: false },
-    },
-    allowPositionals: false,
-  });
-
-  let report: BacktestReport;
-
-  if (values.dataset) {
-    const rows = readJsonl(values.dataset);
-    const problems: string[] = [];
-    const cases: DatasetCase[] = [];
-
-    rows.forEach((row, i) => {
-      const issues = validateDatasetCase(row, defaultRegistry().names());
-      if (issues.length > 0) {
-        for (const issue of issues) problems.push(`row ${i} (${values.dataset}): ${issue}`);
-      } else {
-        cases.push(row as DatasetCase);
-      }
-    });
-
-    if (problems.length > 0) {
-      for (const problem of problems) process.stderr.write(`error  ${problem}\n`);
-      process.stderr.write(
-        `\n${problems.length} problem(s) found in ${values.dataset}. Refusing to backtest an invalid dataset.\n`,
-      );
-      return EXIT_CODES.INTERNAL_ERROR;
-    }
-
-    report = backtestDataset(cases);
-  } else {
-    const ledger = openLedger(values.ledger);
-    try {
-      report = backtestLedger(ledger);
-    } finally {
-      ledger.close();
-    }
-  }
-
-  if (values.json) {
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-    return 0;
-  }
-
-  process.stdout.write(`\nBACKTEST · adjudicator ${report.adjudicator_version || "n/a"}\n`);
-  process.stdout.write(`${report.cases.length} case(s) replayed, ${report.skipped.length} skipped\n`);
-
-  if (report.summaries.length === 0) {
-    process.stdout.write(
-      "\nNothing to report. A verdict without an outcome is an opinion — label some\n" +
-        "contracts with `genesis label --contract <hash> --outcome <label>` first.\n",
-    );
-    if (report.skipped.length > 0) {
-      process.stdout.write("\nSkipped:\n");
-      for (const s of report.skipped.slice(0, 20)) process.stdout.write(`  ${s.id}: ${s.reason}\n`);
-    }
-    return 0;
-  }
-
-  for (const summary of report.summaries) printSummary(summary);
-  return 0;
-}
-
-function printSummary(summary: BacktestSummary): void {
-  const out = process.stdout;
-
-  out.write(`\n── ${summary.provenance.toUpperCase()} contracts (n=${summary.cases}) ──\n\n`);
-  out.write(`  False-ship rate         ${formatInterval(summary.false_ship_rate)}\n`);
-  out.write(`    P(SHIP | reverted or hotfixed) — the number that matters\n\n`);
-  out.write(`  Block rate on clean     ${formatInterval(summary.block_rate_on_clean)}\n`);
-  out.write(`    P(NOT READY | merged clean) — the adoption cost\n\n`);
-  out.write(`  Coverage                ${formatInterval(summary.coverage)}\n`);
-  out.write(`    P(verdict is not HUMAN REVIEW)\n\n`);
-  out.write(`  Escalation precision    ${formatInterval(summary.escalation_precision)}\n`);
-  out.write(`    P(problematic | HUMAN REVIEW) vs base rate ${formatInterval(summary.sample_problematic_rate)}\n\n`);
-
-  out.write("  Confusion:\n");
-  for (const cell of summary.confusion) {
-    out.write(`    ${cell.verdict.padEnd(13)} × ${cell.outcome.padEnd(14)} ${cell.count}\n`);
-  }
-
-  if (summary.caveats.length > 0) {
-    out.write("\n  CAVEATS\n");
-    for (const caveat of summary.caveats) out.write(`    · ${caveat}\n`);
-  }
-  out.write("\n");
-}
-
-const EVIDENCE_KINDS = ["mechanical", "behavioral", "judgmental"];
-const COLLECTION_STATUSES = ["collected", "flaky", "error", "not_run"];
-
-/**
- * Minimal runtime shape-check for one `--dataset` row. A malformed row must be
- * reported as "row N: <what>", never surfaced as a raw TypeError three layers
- * deep inside the adjudicator.
- */
-function validateDatasetCase(row: unknown, knownCollectors: readonly string[]): string[] {
-  if (typeof row !== "object" || row === null || Array.isArray(row)) {
-    return ["not a JSON object"];
-  }
-  const r = row as Record<string, unknown>;
-  const issues: string[] = [];
-
-  if (typeof r.id !== "string" || r.id === "") {
-    issues.push('"id" must be a non-empty string');
-  }
-
-  if (typeof r.contract !== "object" || r.contract === null) {
-    issues.push('"contract" must be an object (a FrozenContract)');
-  } else {
-    const validation = validateContract(r.contract, knownCollectors);
-    for (const error of validation.errors) {
-      issues.push(`contract.${error.path}: ${error.message}`);
-    }
-  }
-
-  if (!Array.isArray(r.evidence)) {
-    issues.push('"evidence" must be an array');
-  } else {
-    r.evidence.forEach((item, i) => {
-      for (const issue of validateEvidenceShape(item)) issues.push(`evidence[${i}]: ${issue}`);
-    });
-  }
-
-  if (typeof r.outcome !== "string" || !OUTCOMES.includes(r.outcome as OutcomeLabel)) {
-    issues.push(`"outcome" must be one of: ${OUTCOMES.join(", ")}`);
-  }
-
-  return issues;
-}
-
-/** Field-level shape check for one entry of a dataset row's `evidence` array. */
-function validateEvidenceShape(item: unknown): string[] {
-  if (typeof item !== "object" || item === null || Array.isArray(item)) {
-    return ["must be an object (an Evidence envelope)"];
-  }
-  const e = item as Record<string, unknown>;
-  const issues: string[] = [];
-
-  for (const field of ["evidence_id", "contract_hash", "criterion_id", "requirement_id"]) {
-    if (typeof e[field] !== "string" || e[field] === "") {
-      issues.push(`"${field}" must be a non-empty string`);
-    }
-  }
-
-  if (typeof e.kind !== "string" || !EVIDENCE_KINDS.includes(e.kind)) {
-    issues.push(`"kind" must be one of: ${EVIDENCE_KINDS.join(", ")}`);
-  }
-  if (typeof e.status !== "string" || !COLLECTION_STATUSES.includes(e.status)) {
-    issues.push(`"status" must be one of: ${COLLECTION_STATUSES.join(", ")}`);
-  }
-  if (typeof e.observation !== "object" || e.observation === null || Array.isArray(e.observation)) {
-    issues.push('"observation" must be an object');
-  }
-  if (!Array.isArray(e.detail) || e.detail.some((d: unknown) => typeof d !== "string")) {
-    issues.push('"detail" must be an array of strings');
-  }
-  if (typeof e.collector !== "object" || e.collector === null) {
-    issues.push('"collector" must be an object with name/version/adapter_version');
-  }
-  if (typeof e.provenance !== "object" || e.provenance === null) {
-    issues.push('"provenance" must be an object');
-  }
-  if (e.artifact_digest !== null && typeof e.artifact_digest !== "string") {
-    issues.push('"artifact_digest" must be a string or null');
-  }
-
-  return issues;
 }
 
 // ── audit ───────────────────────────────────────────────────────────────────
@@ -713,7 +134,7 @@ async function cmdAudit(argv: readonly string[]): Promise<number> {
 
   // The ledger is optional here. An audit is useful as a one-shot check; it
   // becomes evidence only when someone needs to prove it happened.
-  const ledger = values.ledger ? openLedger(values.ledger) : undefined;
+  const ledger = values.ledger ? new Ledger(values.ledger) : undefined;
 
   try {
     const record = await runAudit({
@@ -739,7 +160,7 @@ async function cmdAudit(argv: readonly string[]): Promise<number> {
   } catch (error) {
     if (error instanceof AuditError) {
       fail(error.message);
-      return EXIT_CODES.INTERNAL_ERROR;
+      return AUDIT_EXIT.INTERNAL_ERROR;
     }
     throw error;
   } finally {
@@ -790,36 +211,9 @@ function cmdSuites(): number {
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-function openLedger(path: string | undefined): Ledger {
-  const target = path ?? DEFAULT_LEDGER;
-  if (target !== ":memory:") mkdirSync(dirname(resolve(target)), { recursive: true });
-  return new Ledger(target);
-}
-
-function readInline(value: string): string {
-  return value.startsWith("@") ? readFileSync(value.slice(1), "utf8").trim() : value;
-}
-
-function readJson(path: string): unknown {
-  return JSON.parse(readFileSync(path, "utf8")) as unknown;
-}
-
-function readJsonl(path: string): unknown[] {
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "")
-    .map((line) => JSON.parse(line) as unknown);
-}
-
-function writeJson(path: string, value: unknown): void {
-  mkdirSync(dirname(resolve(path)), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
 function usageError(message: string): number {
   fail(message);
-  return EXIT_CODES.INTERNAL_ERROR;
+  return AUDIT_EXIT.INTERNAL_ERROR;
 }
 
 function fail(message: string): void {

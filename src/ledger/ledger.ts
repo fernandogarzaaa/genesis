@@ -19,20 +19,9 @@
 import Database from "better-sqlite3";
 import { canonicalize, hashCanonical, sha256, ZERO_HASH } from "../shared/canonical.js";
 import { redact } from "../shared/redact.js";
-import type { Adjudication } from "../adjudicator/index.js";
-import type { Evidence } from "../evidence/envelope.js";
-import type { FrozenContract } from "../contract/schema.js";
 
-export type EntryType =
-  | "CONTRACT_REGISTERED"
-  | "CONTRACT_AMENDED"
-  | "EVIDENCE_RECORDED"
-  | "VERDICT_RENDERED"
-  | "OUTCOME_LABELED"
-  /** An assurance audit of a verifier under test. See src/assurance/. */
-  | "VERIFIER_AUDITED";
-
-export type OutcomeLabel = "merged_clean" | "reverted" | "hotfixed" | "rejected";
+/** An assurance audit of a verifier under test. See src/assurance/. */
+export type EntryType = "VERIFIER_AUDITED";
 
 export interface LedgerEntry {
   readonly seq: number;
@@ -42,15 +31,6 @@ export interface LedgerEntry {
   readonly contract_hash: string | null;
   readonly payload: unknown;
   readonly recorded_at: number;
-}
-
-export interface OutcomePayload {
-  readonly label: OutcomeLabel;
-  readonly label_source: "github_webhook" | "manual" | "backfill";
-  readonly verdict_entry_hash: string | null;
-  readonly detail: Record<string, unknown>;
-  /** `entry_hash` of a prior label this one replaces. Labels are never edited. */
-  readonly supersedes: string | null;
 }
 
 const SCHEMA = `
@@ -127,33 +107,6 @@ export class Ledger {
 
   // ── Typed writes ──────────────────────────────────────────────────────────
 
-  registerContract(contract: FrozenContract): LedgerEntry {
-    const existing = this.getContract(contract.contract_hash);
-    if (existing) {
-      throw new LedgerError(
-        `contract ${contract.contract_hash.slice(0, 12)} is already registered (seq ${existing.seq}); ` +
-          "contracts are immutable — use `genesis contract amend` to supersede it",
-      );
-    }
-    const type: EntryType = contract.supersedes ? "CONTRACT_AMENDED" : "CONTRACT_REGISTERED";
-    return this.#append(type, contract.contract_hash, contract);
-  }
-
-  recordEvidence(record: Evidence): LedgerEntry {
-    return this.#append("EVIDENCE_RECORDED", record.contract_hash, record);
-  }
-
-  recordVerdict(adjudication: Adjudication, context: Record<string, unknown> = {}): LedgerEntry {
-    return this.#append("VERDICT_RENDERED", adjudication.contract_hash, {
-      ...adjudication,
-      context,
-    });
-  }
-
-  labelOutcome(contract_hash: string, payload: OutcomePayload): LedgerEntry {
-    return this.#append("OUTCOME_LABELED", contract_hash, payload);
-  }
-
   /**
    * Record an assurance audit of a verifier.
    *
@@ -213,18 +166,6 @@ export class Ledger {
     return rows.map(toEntry);
   }
 
-  getContract(contract_hash: string): (LedgerEntry & { payload: FrozenContract }) | null {
-    const row = this.#db
-      .prepare(
-        `SELECT * FROM ledger
-         WHERE contract_hash = ? AND entry_type IN ('CONTRACT_REGISTERED','CONTRACT_AMENDED')
-         ORDER BY seq ASC LIMIT 1`,
-      )
-      .get(contract_hash) as RawRow | undefined;
-    if (!row) return null;
-    return toEntry(row) as LedgerEntry & { payload: FrozenContract };
-  }
-
   head(): LedgerEntry | null {
     const row = this.#db
       .prepare("SELECT * FROM ledger ORDER BY seq DESC LIMIT 1")
@@ -235,18 +176,6 @@ export class Ledger {
   size(): number {
     const row = this.#db.prepare("SELECT COUNT(*) AS n FROM ledger").get() as { n: number };
     return row.n;
-  }
-
-  /** Distinct contract hashes, oldest first. */
-  contractHashes(): string[] {
-    const rows = this.#db
-      .prepare(
-        `SELECT contract_hash FROM ledger
-         WHERE entry_type IN ('CONTRACT_REGISTERED','CONTRACT_AMENDED')
-         ORDER BY seq ASC`,
-      )
-      .all() as Array<{ contract_hash: string }>;
-    return rows.map((r) => r.contract_hash);
   }
 
   // ── Integrity ─────────────────────────────────────────────────────────────
@@ -293,10 +222,6 @@ export class Ledger {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-
-export class LedgerError extends Error {
-  override readonly name = "LedgerError";
-}
 
 export interface ChainVerification {
   readonly ok: boolean;
