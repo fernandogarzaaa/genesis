@@ -10,7 +10,7 @@
  * MVP posture: subprocess, scrubbed environment, wall-clock timeout. Adequate
  * for a locally-run CLI on the user's own code. Container isolation is a hard
  * prerequisite before this ever runs as a hosted service against arbitrary
- * repositories — see docs/v2/04-RISKS.md R8.
+ * verifiers.
  */
 
 import { spawn } from "node:child_process";

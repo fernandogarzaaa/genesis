@@ -3,10 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { adjudicate } from "../src/adjudicator/index.js";
-import { Ledger, LedgerError } from "../src/ledger/ledger.js";
+import { Ledger } from "../src/ledger/ledger.js";
 import { ZERO_HASH } from "../src/shared/canonical.js";
-import { CLEAN_PRE_REGISTRATION, evidence, frozen } from "./helpers.js";
 
 let dir: string;
 let path: string;
@@ -29,7 +27,7 @@ function fixedClock(start = 1_770_000_000_000): () => number {
 describe("ledger chain", () => {
   it("starts from the zero hash", () => {
     const ledger = new Ledger(path, fixedClock());
-    const entry = ledger.registerContract(frozen());
+    const entry = ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
     expect(entry.prev_hash).toBe(ZERO_HASH);
     expect(entry.seq).toBe(1);
     ledger.close();
@@ -37,8 +35,8 @@ describe("ledger chain", () => {
 
   it("links each entry to its predecessor", () => {
     const ledger = new Ledger(path, fixedClock());
-    const a = ledger.registerContract(frozen());
-    const b = ledger.recordEvidence(evidence({ contract_hash: a.contract_hash ?? "x" }));
+    const a = ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
+    const b = ledger.recordVerifierAudit("subject-2", { verdict: "EXPLOITABLE" });
     expect(b.prev_hash).toBe(a.entry_hash);
     expect(b.seq).toBe(2);
     ledger.close();
@@ -46,16 +44,12 @@ describe("ledger chain", () => {
 
   it("verifies an intact chain", () => {
     const ledger = new Ledger(path, fixedClock());
-    const contract = frozen();
-    ledger.registerContract(contract);
-    ledger.recordEvidence(evidence({ contract_hash: contract.contract_hash }));
-    ledger.recordVerdict(
-      adjudicate({ contract, evidence: [], preRegistration: CLEAN_PRE_REGISTRATION }),
-    );
+    ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
+    ledger.recordVerifierAudit("subject-2", { verdict: "EXPLOITABLE" });
 
     const result = ledger.verifyChain();
     expect(result.ok).toBe(true);
-    expect(result.entries).toBe(3);
+    expect(result.entries).toBe(2);
     ledger.close();
   });
 
@@ -69,10 +63,8 @@ describe("ledger chain", () => {
   // must at least be detectable, and detectable at a specific point.
   it("detects an edited payload and names the sequence", () => {
     const ledger = new Ledger(path, fixedClock());
-    const contract = frozen();
-    ledger.registerContract(contract);
-    ledger.recordEvidence(evidence({ contract_hash: contract.contract_hash }));
-    ledger.recordEvidence(evidence({ contract_hash: contract.contract_hash }));
+    ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
+    ledger.recordVerifierAudit("subject-2", { verdict: "SOUND" });
     ledger.close();
 
     const db = new Database(path);
@@ -89,10 +81,9 @@ describe("ledger chain", () => {
 
   it("detects a deleted entry", () => {
     const ledger = new Ledger(path, fixedClock());
-    const contract = frozen();
-    ledger.registerContract(contract);
-    ledger.recordEvidence(evidence({ contract_hash: contract.contract_hash }));
-    ledger.recordEvidence(evidence({ contract_hash: contract.contract_hash }));
+    ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
+    ledger.recordVerifierAudit("subject-2", { verdict: "SOUND" });
+    ledger.recordVerifierAudit("subject-3", { verdict: "SOUND" });
     ledger.close();
 
     const db = new Database(path);
@@ -108,7 +99,7 @@ describe("ledger chain", () => {
 
   it("detects a backdated timestamp", () => {
     const ledger = new Ledger(path, fixedClock());
-    ledger.registerContract(frozen());
+    ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
     ledger.close();
 
     const db = new Database(path);
@@ -121,38 +112,31 @@ describe("ledger chain", () => {
   });
 });
 
-describe("ledger immutability", () => {
-  it("refuses to register the same contract twice", () => {
+describe("ledger reads", () => {
+  it("filters entries by type and subject hash", () => {
     const ledger = new Ledger(path, fixedClock());
-    const contract = frozen();
-    ledger.registerContract(contract);
-    expect(() => ledger.registerContract(contract)).toThrow(LedgerError);
+    ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
+    ledger.recordVerifierAudit("subject-2", { verdict: "EXPLOITABLE" });
+
+    const forSubject1 = ledger.entries({ contract_hash: "subject-1" });
+    expect(forSubject1).toHaveLength(1);
+    expect(forSubject1[0]?.payload).toMatchObject({ verdict: "SOUND" });
+
+    const byType = ledger.entries({ type: "VERIFIER_AUDITED" });
+    expect(byType).toHaveLength(2);
     ledger.close();
   });
 
-  it("keeps superseded outcome labels in the chain", () => {
+  it("reports the head entry and size", () => {
     const ledger = new Ledger(path, fixedClock());
-    const contract = frozen();
-    ledger.registerContract(contract);
+    expect(ledger.head()).toBeNull();
+    expect(ledger.size()).toBe(0);
 
-    const first = ledger.labelOutcome(contract.contract_hash, {
-      label: "merged_clean",
-      label_source: "manual",
-      verdict_entry_hash: null,
-      detail: {},
-      supersedes: null,
-    });
-    ledger.labelOutcome(contract.contract_hash, {
-      label: "reverted",
-      label_source: "manual",
-      verdict_entry_hash: null,
-      detail: {},
-      supersedes: first.entry_hash,
-    });
+    ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
+    const second = ledger.recordVerifierAudit("subject-2", { verdict: "SOUND" });
 
-    const labels = ledger.entries({ type: "OUTCOME_LABELED", contract_hash: contract.contract_hash });
-    expect(labels).toHaveLength(2);
-    expect(ledger.verifyChain().ok).toBe(true);
+    expect(ledger.head()).toMatchObject({ seq: 2, entry_hash: second.entry_hash });
+    expect(ledger.size()).toBe(2);
     ledger.close();
   });
 });
@@ -185,13 +169,12 @@ describe("artifacts", () => {
 describe("export", () => {
   it("emits one JSON object per entry", () => {
     const ledger = new Ledger(path, fixedClock());
-    const contract = frozen();
-    ledger.registerContract(contract);
-    ledger.recordEvidence(evidence({ contract_hash: contract.contract_hash }));
+    ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
+    ledger.recordVerifierAudit("subject-2", { verdict: "EXPLOITABLE" });
 
     const lines = [...ledger.exportJsonl()];
     expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({ seq: 1, entry_type: "CONTRACT_REGISTERED" });
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({ seq: 1, entry_type: "VERIFIER_AUDITED" });
     ledger.close();
   });
 });
