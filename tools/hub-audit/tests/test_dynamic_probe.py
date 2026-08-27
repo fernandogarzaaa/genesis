@@ -54,6 +54,26 @@ async def scoring_quality_reward(completion, answer, **kwargs):
 '''
 
 
+# HUB-005's blokus-geometric-placement reward functions call sibling
+# module-level helpers (`can_place`, `get_piece_cells`) and reference a
+# module-level constant (`PIECES`) -- none of which the single-function
+# extraction this tool started with could see.
+HELPER_DEPENDENT_REWARD = '''
+import json
+
+PIECES = {"mono": 1, "domino": 2, "pentomino": 5}
+
+
+def piece_size(name):
+    return PIECES.get(name, 0)
+
+
+async def coverage_reward(completion, answer, **kwargs):
+    claimed = json.loads(completion[-1]["content"])
+    return min(1.0, piece_size(claimed["piece"]) / 5)
+'''
+
+
 def write(root: Path, name: str, source: str) -> Path:
     path = root / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -158,3 +178,43 @@ def test_load_reward_fn_provides_json_for_json_encoded_answers(tmp_path: Path) -
 
     assert scores["claims the best score"] == pytest.approx(1.0)
     assert scores["no claim"] == pytest.approx(0.3)
+
+
+def test_load_reward_fn_resolves_same_file_helper_dependencies(tmp_path: Path) -> None:
+    """Regression guard for the gap HUB-005's investigation hit: a reward
+    function calling a sibling helper (which itself references a module-level
+    constant) failed with a NameError before load_reward_fn resolved the
+    same-file dependency closure rather than just the one named function."""
+    write(tmp_path, "env.py", HELPER_DEPENDENT_REWARD)
+    fn = load_reward_fn(tmp_path, "coverage_reward")
+
+    scores = score_completions(
+        fn,
+        answer="irrelevant",
+        completions={
+            "claims the biggest piece": json.dumps({"piece": "pentomino"}),
+            "claims the smallest piece": json.dumps({"piece": "mono"}),
+        },
+    )
+
+    assert scores["claims the biggest piece"] == pytest.approx(1.0)
+    assert scores["claims the smallest piece"] == pytest.approx(0.2)
+
+
+def test_load_reward_fn_still_raises_on_unresolvable_dependencies(tmp_path: Path) -> None:
+    """The dependency closure only reaches module-level defs/assignments in
+    the same file -- a name it truly cannot resolve (an import, a helper
+    defined inside another function) must still fail loudly, not silently
+    produce a function that behaves differently than the real environment's."""
+    write(
+        tmp_path,
+        "env.py",
+        """
+async def broken_reward(completion, answer, **kwargs):
+    return some_undefined_helper(completion)
+""",
+    )
+    fn = load_reward_fn(tmp_path, "broken_reward")
+
+    with pytest.raises(NameError):
+        score_completions(fn, answer="x", completions={"a": "text"})

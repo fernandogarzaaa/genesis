@@ -197,8 +197,12 @@ independently confirmed sound.
 
 1. File this against the environment (or its Hub listing). **Not done.**
 2. Triage the four remaining untriaged `regex_answer_extraction` environments
-   by hand (§6). **Not done**, reasonable next increment — same cost as this
-   finding took.
+   by hand (§6). **Partially done:**
+   `HUB-005-blokus-reward-defects.md` triaged `fran/blokus-geometric-placement`
+   and confirmed three more defect mechanisms, plus a real
+   `dynamic_probe.py` upgrade (same-file dependency resolution) that the
+   remaining three environments may also need. Three environments
+   (`quoridor`, `mcmcenv`, `hive`) are still untriaged.
 3. Check `dylantirandaz/omp-coding` and `ritwikraha/the-scientist` for
    Defect A's shape (self-reported metric, unchecked against the actual
    answer) specifically, since `loose_numeric_tolerance` was flagged on both

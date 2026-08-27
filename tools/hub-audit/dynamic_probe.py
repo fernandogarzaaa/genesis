@@ -10,12 +10,14 @@ the grader still pays out. This is that check, generalized.
 It does not assume `verifiers`/`datasets`/any of an environment's real
 dependencies are installed, because a reward function is almost always a
 pure function of (completion, answer) with no need for the rest of the
-package. The function is located by name via AST and its exact source
-segment is exec'd in an isolated namespace -- the environment package itself
-is never imported, so this works even when its dependencies are absent.
+package. The function is located by name via AST; its exact source segment,
+plus the transitive closure of same-file module-level helper functions and
+constants it references, is exec'd in an isolated namespace -- the
+environment package itself is never imported, so this works even when its
+dependencies are absent.
 
-See docs/assurance/findings/HUB-003-build-optimization-reward-gaming.md for
-the first confirmed result, against tohan/catan-resource-trading-simulator.
+See docs/assurance/findings/HUB-003-build-optimization-reward-gaming.md and
+HUB-004-carcassonne-placement-reward-defects.md for confirmed results.
 """
 from __future__ import annotations
 
@@ -57,17 +59,80 @@ def find_function_source(env_dir: Path, func_name: str) -> tuple[Path, str]:
     raise FunctionNotFound(f'no def/async def "{func_name}" found under {env_dir}')
 
 
+def _referenced_names(node: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+
+
+def _module_level_definitions(tree: ast.Module) -> dict[str, ast.AST]:
+    """Map name -> defining node for every top-level function and simple
+    constant assignment in a module. Deliberately excludes classes and
+    anything not directly `exec`-able in isolation -- a reward function
+    that depends on one of those still fails with a NameError, same as
+    before this existed."""
+    out: dict[str, ast.AST] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            out[node.name] = node
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    out[target.id] = node
+    return out
+
+
+def _resolve_dependencies(tree: ast.Module, source: str, entry: ast.AST) -> list[str]:
+    """A reward function calling a same-file helper (`can_place`,
+    `get_piece_cells`, a module-level `PIECES` dict, ...) is common -- more
+    common than the single-function extraction this tool started with could
+    handle. This walks the entry node's referenced names, resolves any that
+    match a module-level definition, and recurses into each one's own
+    references, so the exec namespace carries the whole reachable same-file
+    closure rather than just the one named function."""
+    definitions = _module_level_definitions(tree)
+    resolved: dict[str, str] = {}
+    queue = list(_referenced_names(entry))
+    seen_names = set(queue)
+
+    while queue:
+        name = queue.pop()
+        if name in resolved or name not in definitions:
+            continue
+        dep_node = definitions[name]
+        segment = ast.get_source_segment(source, dep_node)
+        if segment is None:
+            continue
+        resolved[name] = segment
+        for ref in _referenced_names(dep_node):
+            if ref not in seen_names:
+                seen_names.add(ref)
+                queue.append(ref)
+
+    return list(resolved.values())
+
+
 def load_reward_fn(env_dir: Path, func_name: str) -> Callable[..., Any]:
     """Load a named reward function without importing the environment
     package. The namespace carries the stdlib modules reward functions
     commonly reach for at call time (regex extraction, JSON-encoded answers,
-    numeric tolerance) -- not the environment's own helpers, which would
-    require resolving imports back into the package this deliberately never
-    imports. If the function body actually depends on a name this namespace
-    doesn't provide, that fails loudly as a NameError rather than silently."""
-    _, source = find_function_source(env_dir, func_name)
+    numeric tolerance), plus the transitive closure of same-file, module-level
+    helper functions and constants the target actually references (see
+    `_resolve_dependencies`) -- not an import of the environment package
+    itself, which this deliberately never does. If the function still depends
+    on a name neither of those provides (an import, a class, a helper defined
+    inside another function), that fails loudly as a NameError rather than
+    silently."""
+    path, source_segment = find_function_source(env_dir, func_name)
+    module_source = path.read_text()
+    tree = ast.parse(module_source, filename=str(path))
+    entry = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func_name
+    )
+
     namespace: dict[str, Any] = {"re": re, "json": json, "math": math, "Any": Any, "Optional": Optional}
-    exec(compile(source, f"<{func_name}>", "exec"), namespace)
+    for dep_source in _resolve_dependencies(tree, module_source, entry):
+        exec(compile(dep_source, f"<{func_name}-dependency>", "exec"), namespace)
+    exec(compile(source_segment, f"<{func_name}>", "exec"), namespace)
     return namespace[func_name]
 
 
