@@ -125,6 +125,13 @@ bug that caps the one ground-truth-checked component at half credit for 75%
 of correct answers. A wrong, self-reported-score completion outscores a
 correct, honest one 0.63 to 0.455.
 
+**A third, probed and confirmed in `HUB-005-blokus-reward-defects.md`:**
+`fran/blokus-geometric-placement`'s five-function rubric has one dead
+component (never pays out to anyone) and two more that reward naming the
+*biggest* available piece rather than the *correct* one — the
+ground-truth-checked component included, which never verifies the claimed
+piece matches the one the task assigned.
+
 ## 6. Honest limitations
 
 - **Still static.** 47 targets, not 47 defects. Confirming any of them means
