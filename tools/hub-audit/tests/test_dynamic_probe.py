@@ -8,6 +8,7 @@ regardless of correctness.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,25 @@ SYNC_REWARD = '''
 def sync_reward(completion, answer, **kwargs):
     text = completion[-1]["content"].lower()
     return 1.0 if answer.lower() in text else 0.0
+'''
+
+# HUB-004's carcassonne-tile-laying-agent reward functions parse `answer` as
+# JSON and trust a self-reported "score=N" claim with no cross-check against
+# the placement actually described -- both require `json` in the exec
+# namespace, which is the gap this test guards against regressing.
+JSON_ANSWER_REWARD = '''
+import json
+import re
+
+async def scoring_quality_reward(completion, answer, **kwargs):
+    text = completion[-1]["content"]
+    expected = json.loads(answer)
+    match = re.search(r"score[=:]?\\s*([\\d.]+)", text, re.IGNORECASE)
+    if not match:
+        return 0.3
+    claimed = float(match.group(1))
+    best, worst = expected["best_score"], expected["worst_score"]
+    return max(0.0, min(1.0, (claimed - worst) / (best - worst)))
 '''
 
 
@@ -120,3 +140,21 @@ def test_score_completions_accepts_sync_reward_functions(tmp_path: Path) -> None
     scores = score_completions(fn, answer="yes", completions={"a": "yes, absolutely", "b": "no"})
 
     assert scores == {"a": 1.0, "b": 0.0}
+
+
+def test_load_reward_fn_provides_json_for_json_encoded_answers(tmp_path: Path) -> None:
+    """Regression guard for the gap HUB-004's investigation hit: a reward
+    function that does `json.loads(answer)` failed with a NameError before
+    `json` was added to load_reward_fn's namespace."""
+    write(tmp_path, "env.py", JSON_ANSWER_REWARD)
+    fn = load_reward_fn(tmp_path, "scoring_quality_reward")
+
+    answer = json.dumps({"best_score": 8.0, "worst_score": 4.5})
+    scores = score_completions(
+        fn,
+        answer=answer,
+        completions={"claims the best score": "Score: 8.0", "no claim": "no idea"},
+    )
+
+    assert scores["claims the best score"] == pytest.approx(1.0)
+    assert scores["no claim"] == pytest.approx(0.3)

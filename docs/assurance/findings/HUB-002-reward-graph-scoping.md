@@ -116,6 +116,15 @@ for *mentioning words*. That is a hypothesis worth probing, not a result.
 wrong, boilerplate-stuffed build recommendation outscores a correct, terse
 one, 2 to 1.
 
+**A second target, probed and confirmed in
+`HUB-004-carcassonne-placement-reward-defects.md`:**
+`realm/carcassonne-tile-laying-agent`'s rubric has the same content-free-reward
+shape plus an independent defect — a reward component that trusts a
+self-reported score with no check against the actual placement, and a units
+bug that caps the one ground-truth-checked component at half credit for 75%
+of correct answers. A wrong, self-reported-score completion outscores a
+correct, honest one 0.63 to 0.455.
+
 ## 6. Honest limitations
 
 - **Still static.** 47 targets, not 47 defects. Confirming any of them means

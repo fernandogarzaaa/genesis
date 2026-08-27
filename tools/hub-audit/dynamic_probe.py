@@ -24,10 +24,11 @@ import ast
 import asyncio
 import inspect
 import json
+import math
 import re
 import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 
 class FunctionNotFound(Exception):
@@ -58,10 +59,14 @@ def find_function_source(env_dir: Path, func_name: str) -> tuple[Path, str]:
 
 def load_reward_fn(env_dir: Path, func_name: str) -> Callable[..., Any]:
     """Load a named reward function without importing the environment
-    package. If the function body actually depends on a name this namespace
+    package. The namespace carries the stdlib modules reward functions
+    commonly reach for at call time (regex extraction, JSON-encoded answers,
+    numeric tolerance) -- not the environment's own helpers, which would
+    require resolving imports back into the package this deliberately never
+    imports. If the function body actually depends on a name this namespace
     doesn't provide, that fails loudly as a NameError rather than silently."""
     _, source = find_function_source(env_dir, func_name)
-    namespace: dict[str, Any] = {"re": re, "Any": Any}
+    namespace: dict[str, Any] = {"re": re, "json": json, "math": math, "Any": Any, "Optional": Optional}
     exec(compile(source, f"<{func_name}>", "exec"), namespace)
     return namespace[func_name]
 
