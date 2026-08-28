@@ -132,6 +132,22 @@ component (never pays out to anyone) and two more that reward naming the
 ground-truth-checked component included, which never verifies the claimed
 piece matches the one the task assigned.
 
+**A fourth, probed and confirmed in `HUB-006-quoridor-answer-independent-reward.md`:**
+`pronul/quoridor-path-blocking`'s entire five-function rubric never reads its
+`answer` parameter at all — provable by grep, not just by dynamic probe — so
+one fixed, position-independent reply scores the literal maximum on every
+task in the dataset.
+
+**A fifth, probed and confirmed in `HUB-007-hive-boilerplate-reward.md`:**
+`audition/hive-insect-board-game`'s rubric pays 71–100% of its maximum to the
+same fixed reply regardless of position, and its one real correctness check
+has a hedging loophole. That finding also completes the triage of every
+`regex_answer_extraction` and `containment_decides_reward_UNTYPED` hit this
+survey found reachable — see its §5 for the full scorecard: 5 of the 9
+`regex_answer_extraction` hits are now confirmed exploitable, 2 confirmed
+sound, 2 still unread, and both `containment_decides_reward_UNTYPED` hits
+remain at one sound / one unread.
+
 ## 6. Honest limitations
 
 - **Still static.** 47 targets, not 47 defects. Confirming any of them means

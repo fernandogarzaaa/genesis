@@ -191,7 +191,9 @@ completion that solved the assigned task from one that didn't.
 **Does not establish:** whether `pronul/quoridor-path-blocking`,
 `punnettsquare9331/mcmcenv`, or `audition/hive-insect-board-game` — HUB-002's
 remaining untriaged `regex_answer_extraction` hits — share any of these
-patterns; not examined in this pass.
+patterns; not examined in this pass. **Since triaged:** quoridor
+(HUB-006, exploitable), hive (HUB-007, exploitable), mcmcenv (HUB-007 §5,
+sound).
 
 ## 10. Honest limitations
 
@@ -211,7 +213,8 @@ patterns; not examined in this pass.
 
 1. File this against the environment (or its Hub listing). **Not done.**
 2. Triage `pronul/quoridor-path-blocking`, `punnettsquare9331/mcmcenv`, and
-   `audition/hive-insect-board-game` for the same patterns. **Not done.**
+   `audition/hive-insect-board-game` for the same patterns. **Done** —
+   see HUB-006 and HUB-007.
 3. Move to the next unclaimed item.
 
 ## 12. Reproduction
