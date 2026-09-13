@@ -1,6 +1,54 @@
 # Genesis
 
-**Assurance infrastructure for machine-authored work: audit the verifier, not the artifact.**
+**Universal evaluation & assurance for AI-native software: a system makes a claim, Genesis determines what evidence is required to support it.**
+
+```bash
+npm install && npm run build
+
+# 1. Evaluate any system against a declarative spec (no SDK required):
+genesis evaluate examples/arithmetic/evaluation.yaml --out ./results
+
+# 2. Audit the evaluator itself (the evaluator is an attack surface):
+genesis audit --suite code --verifier "node harness.js {task_file} {completion_file}"
+
+# 3. Close the loop — evaluate the system AND assure the evaluator in one command:
+genesis trust examples/classification/evaluation.yaml --out ./trust
+genesis audit-evaluator examples/rag/evaluation.yaml --suite math
+```
+
+## Zero-integration-cost adapters
+
+No SDK required: any command honoring `adapters/PROTOCOL.md` is a subject or
+judge. Thin zero-dependency helpers implement the other side of the contract:
+
+```python
+# Python subject
+from genesis_adapter import run_subject  # adapters/python
+run_subject(lambda task: str(int(task["input"]) * 2))
+```
+
+```js
+// Node judge
+import { runEvaluator } from "./adapters/node/index.js";
+await runEvaluator((task, output) => ({ passed: output === task.reference }));
+```
+
+See `examples/python-classifier/` and `examples/command-evaluator/`.
+
+## Two engines
+
+```text
+EVALUATION ("does it work?")          ASSURANCE ("can I trust the evaluator?")
+claim → dataset → subject →           adversarial + control probes →
+evaluator → metrics → statistics →    false-accept / false-reject rates →
+evidence bundle → verdict             SOUND | EXPLOITABLE | UNRELIABLE | OVER_STRICT
+```
+
+Verdicts on systems (`SUPPORTED | FALSIFIED | INCONCLUSIVE | INVALID | UNTESTED`)
+are deliberately separate from verdicts on evaluators — an evaluator's output
+is an observation, never ground truth.
+
+---
 
 > An RLVR verifier, an eval harness, or a benchmark grader is executable
 > software, and its bugs become rewardable failure modes. An agent optimizing

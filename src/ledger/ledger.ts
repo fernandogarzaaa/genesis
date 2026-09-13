@@ -20,8 +20,8 @@ import Database from "better-sqlite3";
 import { canonicalize, hashCanonical, sha256, ZERO_HASH } from "../shared/canonical.js";
 import { redact } from "../shared/redact.js";
 
-/** An assurance audit of a verifier under test. See src/assurance/. */
-export type EntryType = "VERIFIER_AUDITED";
+/** An assurance audit of a verifier, or a recorded evaluation/benchmark run. */
+export type EntryType = "VERIFIER_AUDITED" | "EVALUATION_RECORDED" | "BENCHMARK_RECORDED";
 
 export interface LedgerEntry {
   readonly seq: number;
@@ -117,6 +117,19 @@ export class Ledger {
    */
   recordVerifierAudit(subject_hash: string, payload: unknown): LedgerEntry {
     return this.#append("VERIFIER_AUDITED", subject_hash, payload);
+  }
+
+  /**
+   * Record a universal evaluation run (claim → experiment → verdict).
+   * `subject_hash` identifies the (spec digest, dataset digest) pair.
+   */
+  recordEvaluation(subject_hash: string, payload: unknown): LedgerEntry {
+    return this.#append("EVALUATION_RECORDED", subject_hash, payload);
+  }
+
+  /** Record a benchmark run (named reusable evaluation). */
+  recordBenchmark(subject_hash: string, payload: unknown): LedgerEntry {
+    return this.#append("BENCHMARK_RECORDED", subject_hash, payload);
   }
 
   // ── Artifacts ─────────────────────────────────────────────────────────────

@@ -30,3 +30,38 @@ export type { Runner, RunResult } from "./evidence/runner.js";
 
 export { canonicalize, hashCanonical, sha256, ZERO_HASH } from "./shared/canonical.js";
 export { redact, registerSecret } from "./shared/redact.js";
+
+// ── Universal evaluation & assurance platform ─────────────────────────────
+export type {
+  EvaluationVerdict, EvaluatorKind, TaskKind, Claim, ClaimHypothesis,
+  EvalTask, DatasetInfo, Trial, TrialCost, Observation, EvidenceRecord,
+  MetricValue, StatisticalResult, PairedComparison, EvalFinding, VerdictRecord,
+} from "./eval/types.js";
+export { validateClaim, checkHypothesis, ClaimError } from "./eval/claim.js";
+export { loadSpecFile, parseSpec, validateSpec, SpecError } from "./eval/spec.js";
+export type { EvalSpec, SubjectSpec, EvaluatorSpec } from "./eval/spec.js";
+export { loadDataset, fromRecords, DatasetError } from "./eval/dataset.js";
+export { createSubject, InlineSubject, CommandSubject, HttpSubject } from "./eval/subjects.js";
+export { createEvaluator } from "./eval/evaluators.js";
+export { registerMetric, metricNames, computeMetric, classificationMetrics, rocAuc, prAuc, expectedCalibrationError, retrievalF1, trialRetrievalValues, trialDetailValues } from "./eval/metrics.js";
+export { idList, retrievalPR } from "./eval/evaluators.js";
+export { describe, describeRate, pairedCompare, bootstrapMeanCI, parseThreshold, checkThreshold } from "./eval/stats.js";
+export { runExperiment } from "./eval/runner.js";
+export type { ExperimentResult, ArmResult } from "./eval/runner.js";
+export { decideVerdict } from "./eval/verdict.js";
+export { buildManifest, writeEvidenceBundle, readEvidenceBundle, GENESIS_VERSION } from "./eval/bundle.js";
+export { renderReport } from "./eval/report.js";
+export { compareBundles, renderComparison, checkRegression } from "./eval/compare.js";
+export {
+  assureEvaluator, auditSpecEvaluatorAgainstSuite, decideTrust,
+  renderAssurance, renderTrust,
+} from "./eval/assurance.js";
+export type {
+  AssuranceVerdict, AssuranceProbe, AssuranceProbeResult, AssuranceFinding,
+  EvaluatorAssurance, TrustVerdict, TrustJudgment,
+} from "./eval/assurance.js";
+export {
+  resolveRegistry, listBenchmarks, loadBenchmark, resolveBenchmarkDataset,
+  BenchmarkError,
+} from "./eval/benchmarks.js";
+export type { BenchmarkInfo } from "./eval/benchmarks.js";
