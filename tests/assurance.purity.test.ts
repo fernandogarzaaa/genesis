@@ -10,9 +10,10 @@
  */
 
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const FINDINGS = new URL("../src/assurance/findings.ts", import.meta.url).pathname;
+const FINDINGS = fileURLToPath(new URL("../src/assurance/findings.ts", import.meta.url));
 
 const ALLOWED_IMPORTS = [
   "../backtest/metrics.js",
