@@ -52,10 +52,16 @@ function scores(input: MetricInput): number[] {
   return input.observations.map((o) => o.score).filter((s): s is number => typeof s === "number");
 }
 
+/**
+ * Success rate over the FULL coverage denominator: successes / all
+ * observations. Unjudged trials (passed null) count as non-successes, never
+ * shrink the denominator. This is fail-closed on purpose: one accepted
+ * judgment plus seven abstentions reads 0.125, not 1.0, so a thinly judged
+ * claim cannot reach SUPPORTED — the evaluator-gap finding explains why.
+ */
 function passRate(input: MetricInput): number | null {
-  const decided = input.observations.map((o) => o.passed).filter((p): p is boolean => typeof p === "boolean");
-  if (decided.length === 0) return null;
-  return decided.filter(Boolean).length / decided.length;
+  if (input.observations.length === 0) return null;
+  return input.observations.filter((o) => o.passed === true).length / input.observations.length;
 }
 
 function latencies(input: MetricInput): number[] {
@@ -69,9 +75,9 @@ reg("mean_score", "mean of numeric scores", (i) => {
   const s = scores(i);
   return s.length > 0 ? s.reduce((a, b) => a + b, 0) / s.length : null;
 });
-reg("exact_match", "fraction with score==1", (i) => {
-  const s = scores(i);
-  return s.length > 0 ? s.filter((v) => v === 1).length / s.length : null;
+reg("exact_match", "fraction of trials with score==1 (over all trials, fail-closed)", (i) => {
+  if (i.observations.length === 0) return null;
+  return i.observations.filter((o) => o.score === 1).length / i.observations.length;
 });
 reg("failure_rate", "1 - task_success", (i) => {
   const p = passRate(i);
@@ -167,22 +173,43 @@ reg("calibration_ece", "expected calibration error (10 bins, lower is better); n
 
 // ── retrieval / RAG ──
 //
-// Per-trial precision/recall from details {retrieved_ids, relevant_ids}
-// (recorded by the `retrieval` evaluator), averaged over defined trials.
-// Undefined trials (no retrieved or no relevant docs) are excluded, not zeroed.
+// Set semantics over details {retrieved_ids, relevant_ids} (recorded by the
+// `retrieval` evaluator). Duplicated IDs are de-duplicated before scoring —
+// ["a","a"] against ["a"] is a perfect trial, not recall 2. A trial with no
+// gold (relevant missing/empty) is unjudged and excluded: the dataset, not
+// the subject, is at fault. A trial whose output carries no IDs (malformed
+// or empty retrieval) scores 0: failing to retrieve is a retrieval failure.
+
+export interface RetrievalTrialStats {
+  /** False when there is no gold to judge against; p/r/f1 are null then. */
+  readonly judged: boolean;
+  readonly p: number | null;
+  readonly r: number | null;
+  readonly f1: number | null;
+}
+
+export function retrievalTrialStats(retrievedRaw: unknown, relevantRaw: unknown): RetrievalTrialStats {
+  if (!Array.isArray(relevantRaw) || relevantRaw.length === 0) {
+    return { judged: false, p: null, r: null, f1: null };
+  }
+  const relevant = new Set(relevantRaw.map(String));
+  const retrieved = new Set(Array.isArray(retrievedRaw) ? retrievedRaw.map(String) : []);
+  let hits = 0;
+  for (const id of retrieved) {
+    if (relevant.has(id)) hits++;
+  }
+  const p = retrieved.size === 0 ? 0 : hits / retrieved.size;
+  const r = hits / relevant.size;
+  return { judged: true, p, r, f1: retrievalF1(p, r) };
+}
 
 function retrievalPRs(input: MetricInput): { p: number | null; r: number | null }[] {
   const out: { p: number | null; r: number | null }[] = [];
   for (const o of input.observations) {
     const d = o.details as Record<string, unknown> | undefined;
-    if (!d || !Array.isArray(d.retrieved_ids) || !Array.isArray(d.relevant_ids)) continue;
-    const retrieved = (d.retrieved_ids as unknown[]).map(String);
-    const relevant = new Set((d.relevant_ids as unknown[]).map(String));
-    const hits = retrieved.filter((id) => relevant.has(id)).length;
-    out.push({
-      p: retrieved.length === 0 ? null : hits / retrieved.length,
-      r: relevant.size === 0 ? null : hits / relevant.size,
-    });
+    if (!d || !("retrieved_ids" in d) || !("relevant_ids" in d)) continue;
+    const s = retrievalTrialStats(d.retrieved_ids, d.relevant_ids);
+    if (s.judged) out.push({ p: s.p, r: s.r });
   }
   return out;
 }
@@ -199,7 +226,7 @@ export function retrievalF1(p: number | null, r: number | null): number | null {
   return (2 * p * r) / (p + r);
 }
 
-/** Per-trial retrieval values for statistics (defined trials only). */
+/** Per-trial retrieval values for statistics (judged trials only). */
 export function trialRetrievalValues(
   observations: readonly { details?: Record<string, unknown> }[],
   which: "p" | "r" | "f1",
@@ -207,14 +234,10 @@ export function trialRetrievalValues(
   const out: number[] = [];
   for (const o of observations) {
     const d = o.details;
-    if (!d || !Array.isArray(d.retrieved_ids) || !Array.isArray(d.relevant_ids)) continue;
-    const retrieved = (d.retrieved_ids as unknown[]).map(String);
-    const relevant = new Set((d.relevant_ids as unknown[]).map(String));
-    const hits = retrieved.filter((id) => relevant.has(id)).length;
-    const p = retrieved.length === 0 ? null : hits / retrieved.length;
-    const r = relevant.size === 0 ? null : hits / relevant.size;
-    const v = which === "p" ? p : which === "r" ? r : retrievalF1(p, r);
-    if (typeof v === "number" && Number.isFinite(v)) out.push(v);
+    if (!d || !("retrieved_ids" in d) || !("relevant_ids" in d)) continue;
+    const s = retrievalTrialStats(d.retrieved_ids, d.relevant_ids);
+    const v = which === "p" ? s.p : which === "r" ? s.r : s.f1;
+    if (s.judged && typeof v === "number" && Number.isFinite(v)) out.push(v);
   }
   return out;
 }
@@ -232,8 +255,8 @@ export function trialDetailValues(
   return out;
 }
 
-reg("retrieval_precision", "mean |retrieved ∩ relevant|/|retrieved| over defined trials", (i) => meanDefined(retrievalPRs(i).map((x) => x.p)));
-reg("retrieval_recall", "mean |retrieved ∩ relevant|/|relevant| over defined trials", (i) => meanDefined(retrievalPRs(i).map((x) => x.r)));
+reg("retrieval_precision", "mean de-duplicated |retrieved ∩ relevant|/|retrieved|; malformed retrieval scores 0", (i) => meanDefined(retrievalPRs(i).map((x) => x.p)));
+reg("retrieval_recall", "mean de-duplicated |retrieved ∩ relevant|/|relevant|; malformed retrieval scores 0", (i) => meanDefined(retrievalPRs(i).map((x) => x.r)));
 reg("retrieval_f1", "mean per-trial retrieval F1 over defined trials", (i) =>
   meanDefined(retrievalPRs(i).map((x) => retrievalF1(x.p, x.r))),
 );

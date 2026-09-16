@@ -43,7 +43,7 @@ export type { EvalSpec, SubjectSpec, EvaluatorSpec } from "./eval/spec.js";
 export { loadDataset, fromRecords, DatasetError } from "./eval/dataset.js";
 export { createSubject, InlineSubject, CommandSubject, HttpSubject } from "./eval/subjects.js";
 export { createEvaluator } from "./eval/evaluators.js";
-export { registerMetric, metricNames, computeMetric, classificationMetrics, rocAuc, prAuc, expectedCalibrationError, retrievalF1, trialRetrievalValues, trialDetailValues } from "./eval/metrics.js";
+export { registerMetric, metricNames, computeMetric, classificationMetrics, rocAuc, prAuc, expectedCalibrationError, retrievalF1, retrievalTrialStats, trialRetrievalValues, trialDetailValues } from "./eval/metrics.js";
 export { idList, retrievalPR } from "./eval/evaluators.js";
 export { describe, describeRate, pairedCompare, bootstrapMeanCI, parseThreshold, checkThreshold } from "./eval/stats.js";
 export { runExperiment } from "./eval/runner.js";
