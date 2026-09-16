@@ -185,25 +185,30 @@ export class HttpSubject implements SubjectAdapter {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.#spec.timeout_ms ?? 60_000);
-      const res = await fetch(http.url, {
-        method: http.method ?? "POST",
-        headers: { "content-type": "application/json", ...(http.headers ?? {}) },
-        body: JSON.stringify({ task }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      const text = await res.text();
-      let output: unknown = text;
       try {
-        output = JSON.parse(text);
-      } catch {
-        output = text;
+        const res = await fetch(http.url, {
+          method: http.method ?? "POST",
+          headers: { "content-type": "application/json", ...(http.headers ?? {}) },
+          body: JSON.stringify({ task }),
+          signal: controller.signal,
+        });
+        // The deadline covers the body too: headers resolving first must not
+        // disarm the timeout while a stalled body streams forever.
+        const text = await res.text();
+        let output: unknown = text;
+        try {
+          output = JSON.parse(text);
+        } catch {
+          output = text;
+        }
+        return {
+          output, raw_stdout: redact(text), raw_stderr: "",
+          exit_code: res.ok ? 0 : res.status, duration_ms: Date.now() - started,
+          timed_out: false, error: res.ok ? null : `http ${res.status}`,
+        };
+      } finally {
+        clearTimeout(timer);
       }
-      return {
-        output, raw_stdout: redact(text), raw_stderr: "",
-        exit_code: res.ok ? 0 : res.status, duration_ms: Date.now() - started,
-        timed_out: false, error: res.ok ? null : `http ${res.status}`,
-      };
     } catch (error) {
       return {
         output: null, raw_stdout: "", raw_stderr: "",

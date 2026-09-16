@@ -23,10 +23,11 @@ describe("assurance probes", () => {
     expect(a.dataset_digest).toMatch(/^sha256:/);
   }, 60_000);
 
-  it("brands the retrieval evaluator SOUND (abstinence is safe, not a defect)", async () => {
+  it("brands the retrieval evaluator SOUND (garbage strings are judged failures, not shrugs)", async () => {
     const a = await assureEvaluator(loadSpecFile("examples/rag/evaluation.yaml"));
     expect(a.verdict).toBe("SOUND");
-    expect(a.abstains).toBeGreaterThan(0); // empty/echo outputs → null → abstain
+    // Empty/echo outputs carry no IDs: scored 0 (reject), not abstained.
+    expect(a.abstains).toBe(0);
     expect(a.findings.some((f) => f.severity === "exploitable")).toBe(false);
   }, 60_000);
 

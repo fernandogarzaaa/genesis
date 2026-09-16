@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { createEvaluator } from "../src/eval/evaluators.js";
 import {
   computeMetric, classificationMetrics, rocAuc, prAuc,
-  expectedCalibrationError, retrievalF1,
+  expectedCalibrationError, retrievalF1, retrievalTrialStats,
 } from "../src/eval/metrics.js";
 import { runExperiment } from "../src/eval/runner.js";
 import { loadSpecFile } from "../src/eval/spec.js";
@@ -45,6 +45,13 @@ describe("classification evaluator", () => {
     expect(r.passed).toBe(false);
     expect(r.details).toMatchObject({ predicted: "dog", actual: "cat" });
     expect(r.details).not.toHaveProperty("predicted_bool");
+  });
+
+  it("P1: classification abstains without ground truth instead of matching 'null'", async () => {
+    const e = createEvaluator({ type: "classification", positive: "positive" });
+    const r = await e.evaluate({ id: "t", input: "x" }, "null");
+    expect(r.passed).toBeNull();
+    expect(r.score).toBeNull();
   });
 });
 
@@ -166,17 +173,40 @@ describe("retrieval metrics", () => {
     expect(computeMetric("context_relevance", input).value).toBeCloseTo(0.5);
   });
 
-  it("excludes undefined trials instead of zeroing them", () => {
-    const withGap = {
+  it("malformed retrieval counts as 0; only gold-missing trials are excluded", () => {
+    const withMalformed = {
       trials: [],
       observations: [...(input as { observations: never[] }).observations, obs(null, ["a"])],
     } as never;
-    expect(computeMetric("retrieval_precision", withGap).value).toBeCloseTo(0.5);
+    // null retrieved + present gold is a judged failure: (0.5+1+0+0)/4.
+    expect(computeMetric("retrieval_precision", withMalformed).value).toBeCloseTo(0.375);
+    const withGoldMissing = {
+      trials: [],
+      observations: [...(input as { observations: never[] }).observations, obs(["a"], null)],
+    } as never;
+    // No gold: excluded, mean unchanged at 0.5.
+    expect(computeMetric("retrieval_precision", withGoldMissing).value).toBeCloseTo(0.5);
   });
 
-  it("retrievalF1 is 0 for disjoint sets, null for undefined", () => {
-    expect(retrievalF1(0, 0)).toBe(0);
-    expect(retrievalF1(null, 1)).toBeNull();
+  it("P1: duplicated IDs are de-duplicated before scoring", () => {
+    // ["a","a"] vs ["a"] used to report recall 2 and F1 4/3.
+    const s = retrievalTrialStats(["a", "a"], ["a"]);
+    expect(s).toMatchObject({ judged: true, p: 1, r: 1, f1: 1 });
+    const e = createEvaluator({ type: "retrieval" });
+    return e.evaluate(
+      { id: "t", input: "q", metadata: { relevant_ids: ["a"] } },
+      { retrieved_ids: ["a", "a", "b"] },
+    ).then((r) => {
+      expect(r.score).toBeCloseTo(2 / 3);
+      expect(r.details).toMatchObject({ precision: 0.5, recall: 1 });
+    });
+  });
+
+  it("P1: empty or malformed retrieval scores 0; missing gold is unjudged", () => {
+    expect(retrievalTrialStats([], ["a", "b"])).toMatchObject({ judged: true, p: 0, r: 0, f1: 0 });
+    expect(retrievalTrialStats(null, ["a"])).toMatchObject({ judged: true, p: 0, r: 0, f1: 0 });
+    expect(retrievalTrialStats(["a"], null)).toMatchObject({ judged: false, p: null, r: null });
+    expect(retrievalTrialStats(["a"], [])).toMatchObject({ judged: false, p: null, r: null });
     expect(retrievalF1(1, 1)).toBe(1);
   });
 });

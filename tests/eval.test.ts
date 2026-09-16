@@ -150,6 +150,15 @@ describe("evaluators", () => {
     expect((await e.evaluate(task({ input: "x", reference: "HELLO" }), "bye")).passed).toBe(false);
   });
 
+  it("exact abstains without a reference instead of matching 'undefined'", async () => {
+    const e = createEvaluator({ type: "exact" });
+    // P1: norm(undefined) is the string "undefined" — a subject emitting it
+    // must never pass.
+    const r = await e.evaluate(task({ input: "x", reference: undefined }), "undefined");
+    expect(r.passed).toBeNull();
+    expect(r.score).toBeNull();
+  });
+
   it("regex tests patterns", async () => {
     const e = createEvaluator({ type: "regex", pattern: "^OK:" });
     expect((await e.evaluate(task(), "OK: done")).passed).toBe(true);
@@ -207,8 +216,7 @@ describe("metrics", () => {
     expect(metricNames()).toContain("cost_per_success_usd");
   });
 
-  it("computes task_success and latency", () => {
-    const trials = [
+  it("computes task_success and latency", () => {    const trials = [
       { trial_id: "t1", task_id: "a", repetition: 1, seed: 1, subject: "s", started_at: "", ended_at: "", duration_ms: 100, timed_out: false, error: null, output: "x" },
       { trial_id: "t2", task_id: "b", repetition: 1, seed: 1, subject: "s", started_at: "", ended_at: "", duration_ms: 300, timed_out: false, error: null, output: "y" },
     ] as never;
@@ -219,6 +227,21 @@ describe("metrics", () => {
     expect(computeMetric("task_success", { trials, observations }).value).toBe(0.5);
     expect(computeMetric("p95_latency_ms", { trials, observations }).value).toBeGreaterThan(100);
     expect(computeMetric("timeout_rate", { trials, observations }).value).toBe(0);
+  });
+
+  it("P1: unjudged trials count against success rates (fail-closed denominator)", () => {
+    const trials = [
+      { trial_id: "t1", task_id: "a", repetition: 1, seed: 1, subject: "s", started_at: "", ended_at: "", duration_ms: 10, timed_out: false, error: null, output: "x" },
+    ] as never;
+    const mk = (passed: boolean | null, score: number | null) => ({
+      trial_id: "t1", task_id: "a", evaluator: "e", evaluator_kind: "reference", score, passed,
+    });
+    // 1 accept + 7 abstentions over 8 observations reads 0.125, not 1.0.
+    const observations = [mk(true, 1), mk(null, null), mk(null, null), mk(null, null), mk(null, null), mk(null, null), mk(null, null), mk(null, null)] as never;
+    expect(computeMetric("task_success", { trials, observations }).value).toBe(0.125);
+    expect(computeMetric("accuracy", { trials, observations }).value).toBe(0.125);
+    expect(computeMetric("failure_rate", { trials, observations }).value).toBe(0.875);
+    expect(computeMetric("exact_match", { trials, observations }).value).toBe(0.125);
   });
 
   it("returns null on missing data instead of throwing", () => {

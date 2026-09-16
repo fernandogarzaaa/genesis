@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { redact } from "../shared/redact.js";
 import { SubprocessRunner, type Runner } from "../evidence/runner.js";
+import { retrievalTrialStats } from "./metrics.js";
 import type { EvalTask, EvaluatorKind, Observation } from "./types.js";
 import type { EvaluatorSpec } from "./spec.js";
 
@@ -82,6 +83,16 @@ export class ExactEvaluator implements Evaluator {
   }
   async evaluate(task: EvalTask, output: unknown): Promise<Omit<Observation, "trial_id" | "task_id">> {
     const ref = this.#field ? (task as unknown as Record<string, unknown>)[this.#field] : (task.reference ?? task.expected);
+    // No reference means nothing to compare against. Comparing would coerce
+    // `undefined` to the literal string "undefined" — a subject emitting that
+    // string would then "pass". Abstain instead: unjudged, never SUPPORTED.
+    if (ref === null || ref === undefined) {
+      return {
+        evaluator: this.name, evaluator_kind: this.kind,
+        score: null, passed: null,
+        details: { error: "no reference output to compare against" },
+      };
+    }
     const out = this.#field && output && typeof output === "object"
       ? (output as Record<string, unknown>)[this.#field]
       : output;
@@ -483,6 +494,15 @@ export class ClassificationEvaluator implements Evaluator {
   async evaluate(task: EvalTask, output: unknown): Promise<Omit<Observation, "trial_id" | "task_id">> {
     const actual: unknown =
       task.reference ?? task.expected ?? task.labels?.actual ?? null;
+    // Same sentinel rule as ExactEvaluator: no ground truth means no verdict.
+    // `norm(null)` is the string "null", which a subject could echo to pass.
+    if (actual === null || actual === undefined) {
+      return {
+        evaluator: this.name, evaluator_kind: this.kind,
+        score: null, passed: null,
+        details: { error: "no ground-truth label to classify against" },
+      };
+    }
     let predictedRaw: unknown = output;
     let score: number | null = null;
     if (output && typeof output === "object" && !Array.isArray(output)) {
@@ -537,9 +557,9 @@ function toBooleans(
  *
  * Relevant ids come from task.labels.relevant_ids ?? task.metadata.relevant_ids
  * ?? task.context.relevant_ids. Retrieved ids come from an array output or
- * output.retrieved_ids/retrieved/ids. Score is per-trial F1; passed is F1>=0.5.
- * Undefined cases (no retrieved docs, no relevant docs) record nulls so the
- * metrics average over defined trials instead of inventing zeroes.
+ * output.retrieved_ids/retrieved/ids. Scoring uses set semantics from
+ * metrics.retrievalTrialStats: duplicates de-duplicated, malformed or empty
+ * retrieval scores 0, missing gold abstains.
  */
 export class RetrievalEvaluator implements Evaluator {
   readonly name = "retrieval";
@@ -548,11 +568,11 @@ export class RetrievalEvaluator implements Evaluator {
     return { type: "retrieval" };
   }
   async evaluate(task: EvalTask, output: unknown): Promise<Omit<Observation, "trial_id" | "task_id">> {
-    const relevant = idList(
+    const relevantRaw =
       task.labels?.relevant_ids ??
         task.metadata?.relevant_ids ??
-        (task.context as Record<string, unknown> | undefined)?.relevant_ids,
-    );
+        (task.context as Record<string, unknown> | undefined)?.relevant_ids;
+    const relevant = idList(relevantRaw);
     let retrieved: string[] | null = null;
     if (Array.isArray(output)) retrieved = idList(output);
     else if (output && typeof output === "object") {
@@ -560,18 +580,16 @@ export class RetrievalEvaluator implements Evaluator {
       const cand = o.retrieved_ids ?? o.retrieved ?? o.ids;
       if (cand !== undefined) retrieved = idList(cand);
     }
-    const pr = retrievalPR(retrieved, relevant);
-    // F1 is 0 (not null) when both sides are defined but share nothing;
-    // null only when precision/recall themselves are undefined.
-    const f1 = pr.p === null || pr.r === null ? null : pr.p + pr.r > 0 ? (2 * pr.p * pr.r) / (pr.p + pr.r) : 0;
+    const s = retrievalTrialStats(retrieved, relevant);
+    const f1 = s.judged ? s.f1 : null;
     return {
       evaluator: this.name, evaluator_kind: this.kind,
       score: f1, passed: f1 === null ? null : f1 >= 0.5,
       details: {
         ...(retrieved !== null ? { retrieved_ids: retrieved } : { retrieved_ids: null }),
         ...(relevant !== null ? { relevant_ids: relevant } : { relevant_ids: null }),
-        ...(pr.p !== null ? { precision: pr.p } : {}),
-        ...(pr.r !== null ? { recall: pr.r } : {}),
+        ...(s.p !== null ? { precision: s.p } : {}),
+        ...(s.r !== null ? { recall: s.r } : {}),
         ...(f1 !== null ? { f1 } : {}),
       },
     };
@@ -583,17 +601,16 @@ export function idList(v: unknown): string[] | null {
   return v.map((x) => (typeof x === "string" ? x : JSON.stringify(x) ?? String(x)));
 }
 
+/**
+ * Legacy helper kept for API compatibility; delegates to the canonical
+ * set-semantics implementation in metrics.ts.
+ */
 export function retrievalPR(
   retrieved: readonly string[] | null,
   relevant: readonly string[] | null,
 ): { p: number | null; r: number | null } {
-  if (retrieved === null || relevant === null) return { p: null, r: null };
-  const rel = new Set(relevant);
-  const hits = retrieved.filter((id) => rel.has(id)).length;
-  return {
-    p: retrieved.length === 0 ? null : hits / retrieved.length,
-    r: relevant.length === 0 ? null : hits / relevant.length,
-  };
+  const s = retrievalTrialStats(retrieved, relevant);
+  return { p: s.p, r: s.r };
 }
 
 function printable(v: unknown): string {
