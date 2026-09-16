@@ -65,3 +65,4 @@ export {
   BenchmarkError,
 } from "./eval/benchmarks.js";
 export type { BenchmarkInfo } from "./eval/benchmarks.js";
+export { createMcpServer, runMcpServer } from "./mcp/server.js";

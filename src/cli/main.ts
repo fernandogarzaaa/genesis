@@ -42,6 +42,9 @@ const USAGE = `genesis ${VERSION} — universal evaluation & assurance for AI-na
     genesis run-benchmark <name> --subject "<cmd>" [--baseline "<cmd>"]
       [--out <dir>] [--ledger <db>] [--json] [--registry <dir>]
 
+  Agent platforms (MCP stdio server for Claude Code, Codex, opencode, ...):
+    genesis mcp                                                (serve tools over stdio; see plugins/)
+
   Assurance ("can I trust the evaluator?"):
     genesis audit              --suite <code|json|math|behavioral> [--ledger <db>] [--json] [--verbose]
                                and exactly one of:
@@ -101,6 +104,9 @@ export async function main(argv: readonly string[]): Promise<number> {
 
       case "run-benchmark":
         return await cmdRunBenchmark(argv.slice(1));
+
+      case "mcp":
+        return await cmdMcp();
 
       case "suites":
         return cmdSuites();
@@ -676,6 +682,18 @@ async function cmdRunBenchmark(argv: readonly string[]): Promise<number> {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+async function cmdMcp(): Promise<number> {
+  // stdio is the protocol channel: keep it clean, diagnostics go to stderr.
+  try {
+    const { runMcpServer } = await import("../mcp/server.js");
+    await runMcpServer();
+    return 0;
+  } catch (error) {
+    fail((error as Error).message);
+    return AUDIT_EXIT.INTERNAL_ERROR;
+  }
+}
 
 function usageError(message: string): number {
   fail(message);
