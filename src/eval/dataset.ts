@@ -197,6 +197,7 @@ function normalizeTask(r: unknown, i: number): EvalTask {
       ...(o.constraints ? { constraints: o.constraints as Record<string, unknown> } : {}),
       ...(o.metadata ? { metadata: o.metadata as Record<string, unknown> } : {}),
       ...(Array.isArray(o.tags) ? { tags: o.tags as string[] } : {}),
+      ...(Array.isArray(o.turns) ? { turns: o.turns as unknown[] } : {}),
       ...(o.labels && typeof o.labels === "object" && !Array.isArray(o.labels)
         ? { labels: o.labels as Record<string, unknown> }
         : {}),

@@ -1,0 +1,2 @@
+{"input": "triage", "reference": "escalated: order #42 missing", "turns": ["a customer writes in", "they say order #42 never arrived", "they ask for escalation"]}
+{"input": "triage", "reference": "resolved: refund issued", "turns": ["a customer writes in", "they say the item arrived broken", "they accept a refund"]}
