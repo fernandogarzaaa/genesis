@@ -125,7 +125,10 @@ function renderArm(arm: ExperimentResult["arms"][number]): string {
     const interval = stat ? `[${fmt(stat.ci95.low)}–${fmt(stat.ci95.high)}, n=${stat.n}]` : `[n=${m.n}, no interval]`;
     return `<tr><td class="mono">${escapeHtml(m.metric)}</td><td>${fmt(m.value)}${m.unit ? ` ${escapeHtml(m.unit)}` : ""}</td><td class="mono">${interval}</td><td>${bar}</td></tr>`;
   }).join("");
-  return `<div class="card"><h2>Arm: ${escapeHtml(arm.arm)} — ${arm.trials.length} trials</h2><table><tr><th>Metric</th><th>Value</th><th>Interval</th><th></th></tr>${rows}</table></div>`;
+  const agreement = arm.evaluator_agreement
+    ? `<tr><td class="mono">inter-rater κ</td><td>${arm.evaluator_agreement.cohen_kappa === null ? "n/a" : arm.evaluator_agreement.cohen_kappa.toFixed(4)}</td><td class="mono">n=${arm.evaluator_agreement.n}${arm.evaluator_agreement.interpretation ? `, ${escapeHtml(arm.evaluator_agreement.interpretation)}` : ""}</td><td></td></tr>`
+    : "";
+  return `<div class="card"><h2>Arm: ${escapeHtml(arm.arm)} — ${arm.trials.length} trials</h2><table><tr><th>Metric</th><th>Value</th><th>Interval</th><th></th></tr>${rows}${agreement}</table></div>`;
 }
 
 function ciBar(low: number, high: number, mean: number): string {
@@ -160,7 +163,11 @@ export function renderHtmlFromBundle(dir: string): string {
   const verdict = read("verdict.json") as ExperimentResult["verdict"];
   const findings = read("findings.json") as ExperimentResult["findings"];
   const statistics = read("statistics.json") as {
-    arms: { arm: string; statistics: ExperimentResult["arms"][number]["statistics"] }[];
+    arms: {
+      arm: string;
+      statistics: ExperimentResult["arms"][number]["statistics"];
+      evaluator_agreement?: ExperimentResult["arms"][number]["evaluator_agreement"];
+    }[];
     comparisons: ExperimentResult["comparisons"];
   };
   const arms: ExperimentResult["arms"] = [];
@@ -184,7 +191,11 @@ export function renderHtmlFromBundle(dir: string): string {
       }
     }
     const stats = statistics.arms.find((a) => a.arm === armDir)?.statistics ?? [];
-    arms.push({ arm: armDir, trials, observations, evidence: [], metrics, statistics: stats });
+    const agreement = statistics.arms.find((a) => a.arm === armDir)?.evaluator_agreement;
+    arms.push({
+      arm: armDir, trials, observations, evidence: [], metrics, statistics: stats,
+      ...(agreement ? { evaluator_agreement: agreement } : {}),
+    });
   }
   for (const entry of readdirSync(dir)) {
     if (entry !== "treatment" && entry !== "baseline" && existsSync(join(dir, entry, "metrics.json"))) {

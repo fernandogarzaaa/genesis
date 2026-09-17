@@ -46,6 +46,8 @@ export { createEvaluator } from "./eval/evaluators.js";
 export { registerMetric, metricNames, computeMetric, classificationMetrics, rocAuc, prAuc, expectedCalibrationError, retrievalF1, retrievalTrialStats, trialRetrievalValues, trialDetailValues } from "./eval/metrics.js";
 export { idList, retrievalPR } from "./eval/evaluators.js";
 export { describe, describeRate, pairedCompare, bootstrapMeanCI, parseThreshold, checkThreshold } from "./eval/stats.js";
+export { cohenKappa, fleissKappa, interpretKappa } from "./eval/agreement.js";
+export type { KappaResult } from "./eval/agreement.js";
 export { runExperiment } from "./eval/runner.js";
 export type { ExperimentResult, ArmResult } from "./eval/runner.js";
 export { decideVerdict } from "./eval/verdict.js";

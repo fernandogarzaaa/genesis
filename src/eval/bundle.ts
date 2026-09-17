@@ -97,7 +97,11 @@ export function writeEvidenceBundle(
     write(join(armDir, "metrics.json"), arm.metrics);
   }
   write("statistics.json", {
-    arms: result.arms.map((a) => ({ arm: a.arm, statistics: a.statistics })),
+    arms: result.arms.map((a) => ({
+      arm: a.arm,
+      statistics: a.statistics,
+      ...(a.evaluator_agreement ? { evaluator_agreement: a.evaluator_agreement } : {}),
+    })),
     comparisons: result.comparisons,
   });
   write("findings.json", result.findings);

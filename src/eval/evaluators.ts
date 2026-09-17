@@ -26,6 +26,7 @@ import { redact } from "../shared/redact.js";
 import { SubprocessRunner, type Runner } from "../evidence/runner.js";
 import { splitCommand } from "./subjects.js";
 import { retrievalTrialStats } from "./metrics.js";
+import { cohenKappa } from "./agreement.js";
 import type { TrajectoryRules } from "./spec.js";
 import type { EvalTask, EvaluatorKind, Observation } from "./types.js";
 import type { EvaluatorSpec } from "./spec.js";
@@ -363,26 +364,45 @@ export class LlmCommandEvaluator implements Evaluator {
 export class HumanEvaluator implements Evaluator {
   readonly name = "human";
   readonly kind: EvaluatorKind = "human";
-  readonly #judgments = new Map<string, { score: number | null; passed: boolean | null }>();
+  readonly #judgments = new Map<string, { score: number | null; passed: boolean | null; label: string | null }>();
   readonly #path: string;
+  readonly #secondaryPath?: string;
   constructor(spec: EvaluatorSpec) {
     if (!spec.judgments) throw new Error("evaluator human: judgments path is required");
     this.#path = spec.judgments;
-    const text = readFileSync(spec.judgments, "utf8");
-    for (const line of text.split(/\r?\n/)) {
-      const t = line.trim();
-      if (!t) continue;
-      const row = JSON.parse(t) as Record<string, unknown>;
-      const id = String(row.task_id ?? row.id ?? "");
-      if (!id) continue;
-      this.#judgments.set(id, {
-        score: typeof row.score === "number" ? (row.score as number) : null,
-        passed: typeof row.passed === "boolean" ? (row.passed as boolean) : null,
-      });
-    }
+    this.#secondaryPath = spec.judgments_secondary;
+    loadJudgments(spec.judgments, this.#judgments);
   }
   describe(): Record<string, unknown> {
-    return { type: "human", judgments: this.#path, count: this.#judgments.size };
+    const agreement = this.agreement();
+    return {
+      type: "human", judgments: this.#path, count: this.#judgments.size,
+      ...(this.#secondaryPath ? { judgments_secondary: this.#secondaryPath } : {}),
+      ...(agreement ? { agreement } : {}),
+    };
+  }
+  /**
+   * Inter-rater agreement (Cohen's κ) between primary and secondary
+   * judgments over overlapping tasks, or null when no second rater exists.
+   */
+  agreement(): { cohen_kappa: number | null; n: number; interpretation: string | null } | null {
+    if (!this.#secondaryPath) return null;
+    const secondary = new Map<string, { score: number | null; passed: boolean | null; label: string | null }>();
+    loadJudgments(this.#secondaryPath, secondary);
+    const ids = [...this.#judgments.keys()].filter((id) => secondary.has(id));
+    const a: unknown[] = [];
+    const b: unknown[] = [];
+    for (const id of ids) {
+      const j1 = this.#judgments.get(id);
+      const j2 = secondary.get(id);
+      const l1 = j1?.label ?? (j1?.passed === true ? true : j1?.passed === false ? false : j1?.score ?? null);
+      const l2 = j2?.label ?? (j2?.passed === true ? true : j2?.passed === false ? false : j2?.score ?? null);
+      if (l1 === null || l1 === undefined || l2 === null || l2 === undefined) continue;
+      a.push(l1);
+      b.push(l2);
+    }
+    const r = cohenKappa(a, b);
+    return { cohen_kappa: r.kappa, n: r.n, interpretation: r.interpretation };
   }
   async evaluate(task: EvalTask, _output: unknown): Promise<Omit<Observation, "trial_id" | "task_id">> {
     const j = this.#judgments.get(task.id);
@@ -395,6 +415,24 @@ export class HumanEvaluator implements Evaluator {
       passed: j.passed ?? (j.score !== null ? j.score >= 0.5 : null),
       details: { rater: "human", task_id: task.id },
     };
+  }
+}
+
+type Judgment = { score: number | null; passed: boolean | null; label: string | null };
+
+function loadJudgments(path: string, into: Map<string, Judgment>): void {
+  const text = readFileSync(path, "utf8");
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    const row = JSON.parse(t) as Record<string, unknown>;
+    const id = String(row.task_id ?? row.id ?? "");
+    if (!id) continue;
+    into.set(id, {
+      score: typeof row.score === "number" ? (row.score as number) : null,
+      passed: typeof row.passed === "boolean" ? (row.passed as boolean) : null,
+      label: typeof row.label === "string" ? (row.label as string) : null,
+    });
   }
 }
 
