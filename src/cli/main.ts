@@ -45,6 +45,13 @@ const USAGE = `genesis ${VERSION} — universal evaluation & assurance for AI-na
   Agent platforms (MCP stdio server for Claude Code, Codex, opencode, ...):
     genesis mcp                                                (serve tools over stdio; see plugins/)
 
+  Frontier validation (capability checkpoints + third-party attestation):
+    genesis gate <spec.yaml> [--suite <...>] [--out <dir>] [--ledger <db>] [--json]
+      exit 0 = RELEASE · 1 = BLOCK · 2 = INCONCLUSIVE · 3 = internal error
+    genesis attest <bundle-dir> --signer <name> --key <private.pem>
+    genesis verify <bundle-dir> [--pubkey <a.pem,b.pem>]
+    genesis keygen --out <prefix>                              (Ed25519 keypair)
+
   Assurance ("can I trust the evaluator?"):
     genesis audit              --suite <code|json|math|behavioral> [--ledger <db>] [--json] [--verbose]
                                and exactly one of:
@@ -107,6 +114,18 @@ export async function main(argv: readonly string[]): Promise<number> {
 
       case "mcp":
         return await cmdMcp();
+
+      case "gate":
+        return await cmdGate(argv.slice(1));
+
+      case "attest":
+        return await cmdAttest(argv.slice(1));
+
+      case "verify":
+        return await cmdVerify(argv.slice(1));
+
+      case "keygen":
+        return await cmdKeygen(argv.slice(1));
 
       case "suites":
         return cmdSuites();
@@ -688,6 +707,157 @@ async function cmdMcp(): Promise<number> {
   try {
     const { runMcpServer } = await import("../mcp/server.js");
     await runMcpServer();
+    return 0;
+  } catch (error) {
+    fail((error as Error).message);
+    return AUDIT_EXIT.INTERNAL_ERROR;
+  }
+}
+
+// ── capability gate + attestation ───────────────────────────────────────────
+
+async function cmdGate(argv: readonly string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: [...argv],
+    options: {
+      suite: { type: "string" },
+      out: { type: "string" },
+      ledger: { type: "string" },
+      json: { type: "boolean", default: false },
+    },
+    allowPositionals: true,
+  });
+  const specPath = positionals[0];
+  if (!specPath) {
+    return usageError("usage: genesis gate <spec.yaml> [--suite <...>] [--out <dir>] [--ledger <db>] [--json]");
+  }
+  const { loadSpecFile } = await import("../eval/spec.js");
+  const { runExperiment } = await import("../eval/runner.js");
+  const { buildManifest, writeTrustBundle } = await import("../eval/bundle.js");
+  const { assureEvaluator, decideTrust } = await import("../eval/assurance.js");
+  const { decideGate, renderGate } = await import("../eval/gate.js");
+  const { hashCanonical } = await import("../shared/canonical.js");
+  let spec: EvalSpec | undefined;
+  try {
+    spec = loadSpecFile(specPath);
+  } catch (error) {
+    return usageError((error as Error).message);
+  }
+  try {
+    const result = await runExperiment(spec);
+    const assurance = await assureEvaluator(spec, { ...(values.suite ? { suite: values.suite } : {}) });
+    const trust = decideTrust(result.verdict.verdict, assurance.verdict);
+    const gate = decideGate(result, assurance, trust.trust, spec.gate?.forbidden ?? {});
+    const outDir = values.out ?? `${spec.name}-gate`;
+    writeTrustBundle(outDir, spec, result, buildManifest(spec, result), assurance, trust, gate);
+    if (values.ledger) {
+      const { Ledger } = await import("../ledger/ledger.js");
+      const ledger = new Ledger(values.ledger);
+      try {
+        ledger.recordEvaluation(
+          hashCanonical({ kind: "gate", spec_digest: result.spec_digest, dataset_digest: result.dataset.digest }),
+          { kind: "gate", spec_digest: result.spec_digest, gate, out_dir: outDir },
+        );
+      } finally {
+        ledger.close();
+      }
+    }
+    if (values.json) {
+      process.stdout.write(`${JSON.stringify({ out_dir: outDir, gate }, null, 2)}\n`);
+    } else {
+      process.stdout.write(renderGate(spec.name, spec.gate?.forbidden ?? {}, gate));
+      process.stdout.write(`Gate bundle: ${outDir}/\n`);
+    }
+    return gate.decision === "RELEASE" ? 0 : gate.decision === "BLOCK" ? 1 : 2;
+  } catch (error) {
+    fail((error as Error).message);
+    return AUDIT_EXIT.INTERNAL_ERROR;
+  }
+}
+
+async function cmdAttest(argv: readonly string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: [...argv],
+    options: {
+      signer: { type: "string" },
+      key: { type: "string" },
+    },
+    allowPositionals: true,
+  });
+  const [dir] = positionals;
+  if (!dir || !values.signer || !values.key) {
+    return usageError("usage: genesis attest <bundle-dir> --signer <name> --key <private.pem>");
+  }
+  try {
+    const { readFileSync } = await import("node:fs");
+    const { attestBundle } = await import("../eval/attest.js");
+    const attestation = attestBundle(dir, values.signer, readFileSync(values.key, "utf8"));
+    process.stdout.write(`Attested by ${attestation.signer} at ${attestation.timestamp}\n`);
+    process.stdout.write(`  bundle: ${attestation.bundle_digest}\n`);
+    process.stdout.write(`  key: ${attestation.key_fingerprint}\n`);
+    return 0;
+  } catch (error) {
+    fail((error as Error).message);
+    return AUDIT_EXIT.INTERNAL_ERROR;
+  }
+}
+
+async function cmdVerify(argv: readonly string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: [...argv],
+    options: { pubkey: { type: "string", multiple: true } },
+    allowPositionals: true,
+  });
+  const [dir] = positionals;
+  if (!dir) return usageError("usage: genesis verify <bundle-dir> [--pubkey <a.pem,b.pem>]");
+  try {
+    const { readFileSync } = await import("node:fs");
+    const { verifyBundle } = await import("../eval/attest.js");
+    const keys: string[] = [];
+    for (const entry of values.pubkey ?? []) {
+      for (const path of entry.split(",").map((s) => s.trim()).filter(Boolean)) {
+        keys.push(readFileSync(path, "utf8"));
+      }
+    }
+    const verification = verifyBundle(dir, keys);
+    process.stdout.write(`bundle: ${verification.bundle_digest}\n`);
+    if (verification.checks.length === 0) {
+      process.stdout.write("no attestations found — nothing to verify\n");
+    }
+    for (const c of verification.checks) {
+      const mark = c.digest_match && c.signature_valid !== false ? "✓" : "✗";
+      process.stdout.write(`  ${mark} ${c.signer}: ${c.detail}\n`);
+    }
+    process.stdout.write(verification.ok ? "VERIFIED\n" : "VERIFICATION FAILED\n");
+    return verification.ok ? 0 : 1;
+  } catch (error) {
+    fail((error as Error).message);
+    return AUDIT_EXIT.INTERNAL_ERROR;
+  }
+}
+
+async function cmdKeygen(argv: readonly string[]): Promise<number> {
+  const { values } = parseArgs({
+    args: [...argv],
+    options: { out: { type: "string" } },
+    allowPositionals: false,
+  });
+  if (!values.out) return usageError("usage: genesis keygen --out <prefix>");
+  try {
+    const { writeFileSync, chmodSync } = await import("node:fs");
+    const { generateKeypair, fingerprint } = await import("../eval/attest.js");
+    const { privateKey, publicKey } = generateKeypair();
+    const privPath = `${values.out}.ed25519.pem`;
+    const pubPath = `${values.out}.ed25519.pub.pem`;
+    writeFileSync(privPath, privateKey, { encoding: "utf8", mode: 0o600 });
+    try {
+      chmodSync(privPath, 0o600);
+    } catch {
+      // Best effort (Windows ignores POSIX modes).
+    }
+    writeFileSync(pubPath, publicKey, "utf8");
+    process.stdout.write(`private: ${privPath} (keep secret)\npublic:  ${pubPath}\n`);
+    process.stdout.write(`fingerprint: ${fingerprint(publicKey)}\n`);
     return 0;
   } catch (error) {
     fail((error as Error).message);

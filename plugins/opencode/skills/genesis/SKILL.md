@@ -20,6 +20,8 @@ support it — and separately asks whether the evaluator deserves trust.
 | CI regression gate | `check_regression` | `genesis regression --base B --candidate C` |
 | Summarize a bundle | `read_report` | `genesis report results/` |
 | Review the claim first | `show_claim` | `genesis claims spec.yaml` |
+| Release-gate a capability | `gate` | `genesis gate spec.yaml` (RELEASE/BLOCK/INCONCLUSIVE) |
+| Attest / verify a bundle | — | `genesis attest`, `genesis verify`, `genesis keygen` |
 
 ## Writing a spec (no SDK required)
 

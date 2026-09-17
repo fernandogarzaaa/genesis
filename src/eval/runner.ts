@@ -83,6 +83,13 @@ export async function runExperiment(
   for (const abl of spec.ablations ?? []) {
     arms.push(await runArm(`ablation:${abl.name}`, abl.name, spec, dataset, evaluator, runner, repetitions, seeds, abl.subject));
   }
+  if (spec.sanity_baseline) {
+    // Degenerate policies: doing nothing and deterministic gibberish.
+    // A healthy evaluator/reward scores them ~0; anything higher is a
+    // reward-sanity finding, not a system achievement.
+    arms.push(await runArm("sanity:empty", "sanity-empty", spec, dataset, evaluator, runner, repetitions, seeds, { inline: "empty" }));
+    arms.push(await runArm("sanity:random", "sanity-random", spec, dataset, evaluator, runner, repetitions, seeds, { inline: "random" }));
+  }
 
   // Metrics + stats per arm.
   const withMetrics: ArmResult[] = arms.map((arm) => {
@@ -99,11 +106,13 @@ export async function runExperiment(
     return { ...arm, metrics, statistics };
   });
 
-  // Paired comparisons: treatment vs baseline, treatment vs each ablation.
+  // Paired comparisons: treatment vs baseline/ablations (sanity arms excluded —
+  // degenerate policies are diagnostics, not comparison arms).
   const comparisons: PairedComparison[] = [];
   const treatment = withMetrics[0];
-  if (treatment && withMetrics.length > 1) {
-    for (const other of withMetrics.slice(1)) {
+  const comparable = withMetrics.slice(1).filter((a) => !a.arm.startsWith("sanity:"));
+  if (treatment && comparable.length > 0) {
+    for (const other of comparable) {
       for (const m of metricList) {
         const b = perTaskMeans(other, m);
         const t = perTaskMeans(treatment as ArmResult, m);
@@ -130,7 +139,7 @@ export async function runExperiment(
     insufficientEvidence: spec.claim?.conclusion_policy?.insufficient_evidence,
   });
 
-  const findings = buildFindings(withMetrics, verdict);
+  const findings = buildFindings(withMetrics, verdict, spec.sanity_threshold ?? 0.1);
   const ended_at = new Date().toISOString();
   const spec_digest = createHash("sha256").update(canonicalize(spec as unknown as Record<string, unknown>)).digest("hex");
 
@@ -338,9 +347,27 @@ function statisticFor(metric: string, arm: ArmResult): StatisticalResult | null 
   return describe(values, metric);
 }
 
-function buildFindings(arms: ArmResult[], verdict: VerdictRecord): EvalFinding[] {
+function buildFindings(arms: ArmResult[], verdict: VerdictRecord, sanityThreshold: number): EvalFinding[] {
   const findings: EvalFinding[] = [];
-  for (const arm of arms) {
+  for (const arm of arms.filter((a) => a.arm.startsWith("sanity:"))) {
+    const judged = arm.observations.filter((o) => typeof o.passed === "boolean").length;
+    const passed = arm.observations.filter((o) => o.passed === true).length;
+    const rate = judged === 0 ? 0 : passed / judged;
+    if (rate > sanityThreshold) {
+      findings.push({
+        category: "reward-sanity",
+        severity: "major",
+        summary: `Degenerate policy "${arm.arm}" scores ${Math.round(rate * 10000) / 100}% — doing nothing (or gibberish) earns reward. The evaluator or reward signal is broken; no verdict built on it can be trusted.`,
+        evidence_digests: arm.evidence.slice(0, 20).map((e) => e.digest),
+        affected_tasks: [...new Set(arm.observations.map((o) => o.task_id))].slice(0, 20),
+        observed_behavior: `Degenerate outputs accepted at rate ${Math.round(rate * 10000) / 10000}.`,
+        expected_behavior: `Degenerate policies score <= ${sanityThreshold}.`,
+        possible_cause: "Reward hackable without doing the task (broken RL environment), over-permissive evaluator, or leaked answers. Filter the environment and assure the evaluator.",
+        confidence: null,
+        evaluator_audit: { verdict: "EXPLOITABLE", detail: "degenerate policies earn reward" },
+      });
+    }
+  }  for (const arm of arms) {
     const failed = arm.observations.filter((o) => o.passed === false);
     if (failed.length > 0) {
       const byTask = new Map<string, Observation[]>();

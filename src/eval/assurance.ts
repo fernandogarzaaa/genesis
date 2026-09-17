@@ -99,10 +99,25 @@ export async function assureEvaluator(
   const isRetrieval = spec.evaluator.type === "retrieval";
 
   // Gold outputs: the controls. Tasks without gold cannot anchor assurance.
-  const golds: { task: EvalTask; gold: unknown }[] = [];
+  // Trajectory tasks declare scope, not answers: synthesize a minimal
+  // in-scope control from the task's own allowed tools.
+  const isTrajectory = spec.evaluator.type === "trajectory";
+  const golds: { task: EvalTask; gold: unknown; wrongGoldOk: boolean }[] = [];
   for (const task of dataset.tasks) {
     const gold = goldOutput(task, isRetrieval);
-    if (gold !== null) golds.push({ task, gold });
+    if (gold !== null) {
+      golds.push({ task, gold, wrongGoldOk: true });
+      continue;
+    }
+    if (isTrajectory) {
+      const allowed = task.constraints?.allowed_tools;
+      if (Array.isArray(allowed) && allowed.length > 0) {
+        // Cross-task golds are NOT adversarial here: admissible behavior is
+        // shared across scope tasks, so another task's in-scope trajectory
+        // is legitimately acceptable.
+        golds.push({ task, gold: { steps: [{ tool: allowed[0], target: "probe", action: "probe" }] }, wrongGoldOk: false });
+      }
+    }
   }
 
   if (golds.length === 0) {
@@ -111,12 +126,12 @@ export async function assureEvaluator(
 
   const capped = golds.slice(0, options.maxTasks ?? MAX_TASKS);
   const probes: AssuranceProbe[] = [];
-  for (const { task, gold } of capped) {
+  for (const { task, gold, wrongGoldOk } of capped) {
     probes.push({
       id: `${task.id}/control-gold`, kind: "control", template: "gold",
       task_id: task.id, output: gold, rationale: "Gold output. An evaluator that rejects this is unusably strict.",
     });
-    probes.push(...exploits(task, gold, capped.map((g) => g.gold), isRetrieval));
+    probes.push(...exploits(task, gold, capped.map((g) => g.gold), isRetrieval, wrongGoldOk));
     probes.push(...stress(task, gold));
   }
 
@@ -201,7 +216,7 @@ function normStr(v: unknown): string {
   return (typeof v === "string" ? v : JSON.stringify(v) ?? String(v)).trim();
 }
 
-function exploits(task: EvalTask, gold: unknown, allGolds: readonly unknown[], isRetrieval: boolean): AssuranceProbe[] {
+function exploits(task: EvalTask, gold: unknown, allGolds: readonly unknown[], isRetrieval: boolean, wrongGoldOk = true): AssuranceProbe[] {
   const out: AssuranceProbe[] = [];
   const base = `${task.id}/exploit`;
 
@@ -221,7 +236,9 @@ function exploits(task: EvalTask, gold: unknown, allGolds: readonly unknown[], i
   }
 
   // Another task's gold with minimal overlap — never the same gold twice.
-  const other = allGolds.filter((g) => normStr(g) !== normStr(gold));
+  // Skipped when cross-task golds are legitimately acceptable (e.g. shared
+  // scope across trajectory tasks): a probe that must pass is not an exploit.
+  const other = wrongGoldOk ? allGolds.filter((g) => normStr(g) !== normStr(gold)) : [];
   if (other.length > 0) {
     const ranked = [...other].sort((a, b) => overlap(a, gold) - overlap(b, gold));
     out.push({

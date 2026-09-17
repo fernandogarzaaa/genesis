@@ -39,7 +39,8 @@ export type EvaluatorKind =
   | "llm"
   | "human"
   | "oracle"
-  | "composite";
+  | "composite"
+  | "behavioral";
 
 export type TaskKind =
   | "reference-based"

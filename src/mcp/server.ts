@@ -250,8 +250,39 @@ export function createMcpServer(): McpServer {
   );
 
   server.registerTool(
-    "read_report",
+    "gate",
     {
+      title: "Release gate (capability checkpoint)",
+      description:
+        "Run the evaluation, assure its evaluator, and bind both to forbidden capability ceilings " +
+        "for a fail-closed RELEASE | BLOCK | INCONCLUSIVE decision. Writes a trust bundle with gate.json.",
+      inputSchema: {
+        spec: z.record(z.string(), z.unknown()).describe("Evaluation spec (may declare gate.forbidden ceilings)"),
+        forbidden: z.record(z.string(), z.number()).optional().describe("Metric ceilings that must not be reached (overrides spec)"),
+        suite: z.enum(["code", "json", "math", "behavioral"]).optional(),
+        outDir: outDirSchema,
+      },
+    },
+    async (args) => {
+      try {
+        const spec = validateSpec(args.spec as unknown, "<mcp>");
+        const result = await runExperiment(spec);
+        const assurance = await assureEvaluator(spec, { ...(args.suite ? { suite: args.suite } : {}) });
+        const trust = decideTrust(result.verdict.verdict, assurance.verdict);
+        const { decideGate, renderGate } = await import("../eval/gate.js");
+        const ceilings = args.forbidden ?? spec.gate?.forbidden ?? {};
+        const gate = decideGate(result, assurance, trust.trust, ceilings);
+        const outDir = args.outDir ?? freshOutDir(spec.name);
+        writeTrustBundle(outDir, spec, result, buildManifest(spec, result), assurance, trust, gate);
+        return ok(renderGate(spec.name, ceilings, gate), { outDir, gate });
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "read_report",    {
       title: "Read a report",
       description: "Render the human-readable summary of an evidence-bundle directory.",
       inputSchema: { dir: z.string().describe("Bundle directory") },

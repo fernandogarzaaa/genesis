@@ -32,7 +32,7 @@ const TINY = {
 };
 
 describe("mcp server", () => {
-  it("lists all nine tools with descriptions and schemas", async () => {
+  it("lists all ten tools with descriptions and schemas", async () => {
     const client = await pair();
     try {
       const { tools } = await client.listTools();
@@ -41,6 +41,7 @@ describe("mcp server", () => {
         "check_regression",
         "compare_runs",
         "evaluate",
+        "gate",
         "list_benchmarks",
         "read_report",
         "run_benchmark",
@@ -79,6 +80,44 @@ describe("mcp server", () => {
       await client.close();
     }
   });
+
+  it("gate tool renders a fail-closed release decision", async () => {
+    const client = await pair();
+    try {
+      const release = await client.callTool({
+        name: "gate",
+        arguments: {
+          spec: {
+            name: "mcp-gate",
+            dataset: { inline: [{ input: "a", reference: "A" }] },
+            subject: { inline: "upper" },
+            evaluator: { type: "exact" },
+            metrics: ["task_success"],
+            thresholds: { task_success: ">=1.0" },
+          },
+        },
+      });
+      const body = (release.content as { type: string; text?: string }[]).map((c) => c.text ?? "").join("\n");
+      expect(body).toContain("GATE: RELEASE");
+      const blocked = await client.callTool({
+        name: "gate",
+        arguments: {
+          spec: {
+            name: "mcp-gate",
+            dataset: { inline: [{ input: "a", reference: "A" }] },
+            subject: { inline: "upper" },
+            evaluator: { type: "exact" },
+            metrics: ["task_success"],
+          },
+          forbidden: { task_success: 0.5 },
+        },
+      });
+      const blockedBody = (blocked.content as { type: string; text?: string }[]).map((c) => c.text ?? "").join("\n");
+      expect(blockedBody).toContain("GATE: BLOCK");
+    } finally {
+      await client.close();
+    }
+  }, 120_000);
 
   it("trust combines system and evaluator verdicts", async () => {
     const client = await pair();
