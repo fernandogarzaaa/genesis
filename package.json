@@ -1,6 +1,6 @@
 {
   "name": "genesis-assurance",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Universal evaluation and assurance platform for AI-native software: declarative evaluations (claim → dataset → subject → evaluator → metrics → evidence → verdict) plus adversarial verifier assurance with tamper-evident ledger.",
   "license": "MIT",
   "type": "module",

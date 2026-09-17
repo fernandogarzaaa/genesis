@@ -110,25 +110,28 @@ export class ExactEvaluator implements Evaluator {
   }
 }
 
-/** Regex over stringified output. */
+/** Regex over stringified output; `invert` passes when the pattern is ABSENT (e.g. injected markers). */
 export class RegexEvaluator implements Evaluator {
   readonly name = "regex";
   readonly kind: EvaluatorKind = "deterministic";
   readonly #pattern: RegExp;
   readonly #source: string;
+  readonly #invert: boolean;
   constructor(spec: EvaluatorSpec) {
     if (!spec.pattern) throw new Error("evaluator regex: pattern is required");
     this.#source = spec.pattern;
     this.#pattern = new RegExp(spec.pattern);
+    this.#invert = spec.invert === true;
   }
   describe(): Record<string, unknown> {
-    return { type: "regex", pattern: this.#source };
+    return { type: "regex", pattern: this.#source, ...(this.#invert ? { invert: true } : {}) };
   }
   async evaluate(task: EvalTask, output: unknown): Promise<Omit<Observation, "trial_id" | "task_id">> {
     void task;
     const text = typeof output === "string" ? output : JSON.stringify(output);
-    const passed = this.#pattern.test(text ?? "");
-    return { evaluator: this.name, evaluator_kind: this.kind, score: passed ? 1 : 0, passed, details: { pattern: this.#source } };
+    const matched = this.#pattern.test(text ?? "");
+    const passed = this.#invert ? !matched : matched;
+    return { evaluator: this.name, evaluator_kind: this.kind, score: passed ? 1 : 0, passed, details: { pattern: this.#source, ...(this.#invert ? { invert: true } : {}) } };
   }
 }
 

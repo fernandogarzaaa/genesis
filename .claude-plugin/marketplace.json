@@ -10,7 +10,7 @@
       "name": "genesis",
       "source": "./plugins/genesis",
       "description": "Evaluate AI systems, audit LLM judges, and gate releases on benchmarks — backed by the Genesis MCP server.",
-      "version": "0.2.0"
+      "version": "0.3.0"
     }
   ]
 }

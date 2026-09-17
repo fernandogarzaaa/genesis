@@ -14,6 +14,11 @@ genesis audit --suite code --verifier "node harness.js {task_file} {completion_f
 # 3. Close the loop — evaluate the system AND assure the evaluator in one command:
 genesis trust examples/classification/evaluation.yaml --out ./trust
 genesis audit-evaluator examples/rag/evaluation.yaml --suite math
+
+# 4. Gate a release on a capability checkpoint, then open the evidence:
+genesis gate examples/agent-scope/evaluation.yaml --out ./release
+genesis report ./release/evaluation --html ./release/report.html
+# (every bundle already ships its own report.html — open it from file://)
 ```
 
 ## Zero-integration-cost adapters

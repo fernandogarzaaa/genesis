@@ -85,6 +85,8 @@ export interface EvaluatorSpec {
   readonly judgments?: string;
   readonly evaluators?: readonly EvaluatorSpec[];
   readonly mode?: "all" | "any";
+  /** regex: pass when the pattern is ABSENT (injection-marker resistance). */
+  readonly invert?: boolean;
   /** classification: the positive class (string/boolean/number). Required for binary precision/recall. */
   readonly positive?: unknown;
   /** classification: output object field holding a numeric score in [0,1] (for ROC-AUC, PR-AUC, calibration). */
