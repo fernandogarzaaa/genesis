@@ -35,6 +35,18 @@ await runEvaluator((task, output) => ({ passed: output === task.reference }));
 
 See `examples/python-classifier/` and `examples/command-evaluator/`.
 
+## Inside AI platforms (MCP + plugins)
+
+```bash
+genesis mcp   # stdio server: evaluate, audit_evaluator, trust,
+              # list_benchmarks, run_benchmark, compare_runs,
+              # check_regression, read_report, show_claim
+```
+
+`plugins/` holds install packs: Claude Code marketplace (`/plugin install
+genesis`), opencode skill + MCP snippet, Codex config + AGENTS.md agreement,
+and generic stdio JSON for Hermes/any MCP client.
+
 ## Two engines
 
 ```text
