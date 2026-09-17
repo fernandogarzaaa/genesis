@@ -38,7 +38,7 @@ function capture() {
 describe("benchmark registry", () => {
   it("lists the three shipped benchmarks with versions and task counts", () => {
     const infos = listBenchmarks(join(process.cwd(), "benchmarks"));
-    expect(infos.map((b) => b.name).sort()).toEqual(["arithmetic-v1", "retrieval-v1", "safety-v1", "sentiment-v1"]);
+    expect(infos.map((b) => b.name).sort()).toEqual(["arithmetic-v1", "prompt-injection-v1", "retrieval-v1", "safety-v1", "sentiment-v1"]);
     for (const b of infos) {
       expect(b.version).toMatch(/^\d+\.\d+\.\d+$/);
       expect(b.description.length).toBeGreaterThan(0);
