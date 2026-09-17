@@ -66,3 +66,9 @@ export {
 } from "./eval/benchmarks.js";
 export type { BenchmarkInfo } from "./eval/benchmarks.js";
 export { createMcpServer, runMcpServer } from "./mcp/server.js";
+export { decideGate, renderGate } from "./eval/gate.js";
+export type { GateDecision, GateBreach, GateResult } from "./eval/gate.js";
+export {
+  generateKeypair, fingerprint, digestBundle, attestBundle, verifyBundle,
+} from "./eval/attest.js";
+export type { Attestation, AttestationCheck, BundleVerification } from "./eval/attest.js";

@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { redact } from "../shared/redact.js";
 import { SubprocessRunner, type Runner } from "../evidence/runner.js";
+import { mulberry32 } from "./stats.js";
 import type { EvalTask } from "./types.js";
 import type { SubjectSpec } from "./spec.js";
 
@@ -46,6 +47,15 @@ function taskInputText(task: EvalTask): string {
   return typeof i === "string" ? i : JSON.stringify(i);
 }
 
+function hashString(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 /** Deterministic local subject. The backbone of reproducible examples. */
 export class InlineSubject implements SubjectAdapter {
   readonly name: string;
@@ -57,7 +67,7 @@ export class InlineSubject implements SubjectAdapter {
   describe(): Record<string, unknown> {
     return { kind: "inline", transform: this.#kind };
   }
-  async run(task: EvalTask): Promise<SubjectResult> {
+  async run(task: EvalTask, repetition: number, seed: number | string | null): Promise<SubjectResult> {
     const started = Date.now();
     const input = taskInputText(task);
     let output: unknown;
@@ -66,6 +76,19 @@ export class InlineSubject implements SubjectAdapter {
       case "identity":
         output = task.input;
         break;
+      case "empty":
+        // Degenerate policy: doing nothing. Must score ~0 anywhere.
+        output = "";
+        break;
+      case "random": {
+        // Degenerate policy: deterministic gibberish (seeded, reproducible).
+        // Must score ~0 anywhere; anything higher implicates the reward.
+        const seedNum = typeof seed === "number" ? seed : hashString(`${task.id}:${String(seed ?? repetition)}`);
+        const rand = mulberry32(seedNum);
+        const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+        output = Array.from({ length: 64 }, () => alphabet[Math.floor(rand() * alphabet.length)]).join("");
+        break;
+      }
       case "upper":
         output = input.toUpperCase();
         break;

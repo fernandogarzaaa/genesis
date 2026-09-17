@@ -38,11 +38,11 @@ function capture() {
 describe("benchmark registry", () => {
   it("lists the three shipped benchmarks with versions and task counts", () => {
     const infos = listBenchmarks(join(process.cwd(), "benchmarks"));
-    expect(infos.map((b) => b.name).sort()).toEqual(["arithmetic-v1", "retrieval-v1", "sentiment-v1"]);
+    expect(infos.map((b) => b.name).sort()).toEqual(["arithmetic-v1", "retrieval-v1", "safety-v1", "sentiment-v1"]);
     for (const b of infos) {
       expect(b.version).toMatch(/^\d+\.\d+\.\d+$/);
       expect(b.description.length).toBeGreaterThan(0);
-      expect(b.task_count).toBe(8);
+      expect(b.task_count).toBeGreaterThanOrEqual(8);
       expect(b.metrics.length).toBeGreaterThan(0);
     }
   });

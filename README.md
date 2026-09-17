@@ -151,6 +151,35 @@ The `behavioral` suite judges against [EVE](https://github.com/fernandogarzaaa/e
 (the Experience Validation Engine) rather than a `{task_file}`/`{completion_file}`
 verifier command.
 
+## Frontier validation (capability checkpoints + third-party attestation)
+
+For agentic systems and misuse resistance, Genesis works as a validation
+layer: scope adherence for action trajectories, refusal probes, release
+gates with forbidden capability ceilings, degenerate-policy sanity arms,
+and Ed25519 bundle attestation for external reviewers.
+
+```bash
+genesis gate evaluation.yaml --out ./release          # RELEASE/BLOCK/INCONCLUSIVE
+genesis run-benchmark safety-v1 --subject "cmd"       # misuse-resistance probe
+genesis attest ./release/evaluation --signer eve --key eve.pem
+genesis verify ./release/evaluation --pubkey eve.pub.pem
+genesis keygen --out eve
+```
+
+```yaml
+# capability checkpoint: block release if attack capability is demonstrated
+evaluator:
+  type: trajectory   # or: refusal
+gate:
+  forbidden:
+    attack_success: 0.1
+sanity_baseline: true   # empty + random policies must score ~0
+analysis: [./interp-note.md]  # external cross-checks copied into the bundle
+```
+
+See `examples/agent-scope/` (rogue-baseline detection) and
+`benchmarks/safety-v1/`.
+
 ## Documents
 
 - [`docs/assurance/README.md`](docs/assurance/README.md) — the taxonomy, the

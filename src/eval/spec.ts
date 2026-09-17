@@ -43,6 +43,22 @@ export interface EvalSpec {
     readonly p95_latency?: { readonly max_increase?: number };
     readonly cost?: { readonly max_increase?: number };
   };
+  /**
+   * Release gate (capability checkpoint): metric ceilings that must NOT be
+   * reached. `genesis gate` BLOCKS when any forbidden metric meets/exceeds
+   * its ceiling, when evidence is missing, or when the evaluator is untrusted.
+   */
+  readonly gate?: { readonly forbidden?: Record<string, number> };
+  /**
+   * Degenerate-policy sanity arms: adds `sanity:empty` and `sanity:random`
+   * arms (doing nothing / gibberish must score ~0). A `reward-sanity`
+   * finding fires when they exceed `sanity_threshold` (default 0.1) —
+   * the generalizeable form of broken-RL-environment filtering.
+   */
+  readonly sanity_baseline?: boolean;
+  readonly sanity_threshold?: number;
+  /** External analysis files (e.g. interpretability notes) copied into the bundle. */
+  readonly analysis?: readonly string[];
   readonly output?: { readonly dir?: string };
 }
 
@@ -58,7 +74,7 @@ export interface SubjectSpec {
 }
 
 export interface EvaluatorSpec {
-  readonly type: "exact" | "regex" | "json_schema" | "javascript" | "command" | "llm_command" | "human" | "oracle" | "composite" | "pass_through" | "classification" | "retrieval";
+  readonly type: "exact" | "regex" | "json_schema" | "javascript" | "command" | "llm_command" | "human" | "oracle" | "composite" | "pass_through" | "classification" | "retrieval" | "trajectory" | "refusal";
   readonly field?: string;
   readonly pattern?: string;
   readonly schema?: Record<string, unknown>;
@@ -73,6 +89,16 @@ export interface EvaluatorSpec {
   readonly positive?: unknown;
   /** classification: output object field holding a numeric score in [0,1] (for ROC-AUC, PR-AUC, calibration). */
   readonly scoreField?: string;
+  /** trajectory: scope rules (per-task constraints override per key). */
+  readonly rules?: TrajectoryRules;
+}
+
+export interface TrajectoryRules {
+  readonly allowed_tools?: readonly string[];
+  readonly forbidden_tools?: readonly string[];
+  readonly forbidden_targets?: readonly string[];
+  readonly forbidden_patterns?: readonly string[];
+  readonly max_steps?: number;
 }
 
 export class SpecError extends Error {
@@ -152,6 +178,10 @@ export function validateSpec(raw: unknown, sourceName = "<inline>"): EvalSpec {
     ...(typeof s.timeout_ms === "number" ? { timeout_ms: s.timeout_ms as number } : {}),
     ...((s.thresholds as object) ? { thresholds: s.thresholds as Record<string, string> } : {}),
     ...((s.regression as object) ? { regression: s.regression as EvalSpec["regression"] } : {}),
+    ...((s.gate as object) ? { gate: s.gate as EvalSpec["gate"] } : {}),
+    ...(s.sanity_baseline === true ? { sanity_baseline: true } : {}),
+    ...(typeof s.sanity_threshold === "number" ? { sanity_threshold: s.sanity_threshold as number } : {}),
+    ...(Array.isArray(s.analysis) ? { analysis: s.analysis as string[] } : {}),
     ...((s.output as object) ? { output: s.output as EvalSpec["output"] } : {}),
   };
 }

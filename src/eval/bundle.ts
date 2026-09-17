@@ -71,7 +71,11 @@ export function writeEvidenceBundle(dir: string, spec: EvalSpec, result: Experim
   write("specification.json", { ...spec, spec_digest: result.spec_digest });
   write("dataset.json", result.dataset);
   for (const arm of result.arms) {
-    const armDir = arm.arm === "treatment" ? "treatment" : arm.arm === "baseline" ? "baseline" : join("ablations", arm.arm.replace(/^ablation:/, ""));
+    const armDir = arm.arm === "treatment"
+      ? "treatment"
+      : arm.arm === "baseline"
+        ? "baseline"
+        : join("ablations", arm.arm.replace(/^(ablation|sanity):/, "").replace(/[^A-Za-z0-9._-]+/g, "_"));
     mkdirSync(join(dir, armDir), { recursive: true });
     const lines = arm.trials.map((t) => {
       const obs = arm.observations.find((o) => o.trial_id === t.trial_id);
@@ -88,6 +92,22 @@ export function writeEvidenceBundle(dir: string, spec: EvalSpec, result: Experim
   const evidenceLines = result.arms.flatMap((a) => a.evidence).map((e) => JSON.stringify(e));
   writeFileSync(join(dir, "evidence", "evidence.jsonl"), `${redact(evidenceLines.join("\n"))}\n`, "utf8");
   write("verdict.json", result.verdict);
+  if (spec.analysis && spec.analysis.length > 0) {
+    // External cross-checks (e.g. interpretability notes): copied verbatim
+    // into the bundle so the verdict cites exactly what was reviewed.
+    mkdirSync(join(dir, "analysis"), { recursive: true });
+    for (const file of spec.analysis) {
+      const full = file;
+      let content: Buffer;
+      try {
+        content = readFileSync(full);
+      } catch {
+        throw new Error(`analysis attachment not found: ${file}`);
+      }
+      const base = file.split(/[\\/]/).pop() as string;
+      writeFileSync(join(dir, "analysis", base), content);
+    }
+  }
   const bundleDigest = createHash("sha256").update(canonicalize(result.verdict as unknown as Record<string, unknown>)).digest("hex");
   writeFileSync(join(dir, "DIGEST"), `sha256:${bundleDigest}\n`, "utf8");
 }
@@ -113,6 +133,7 @@ function tryRead(path: string): unknown {
  * <dir>/evaluation/...   (standard evidence bundle)
  * <dir>/assurance.json   (dataset-derived probes + optional suite audit)
  * <dir>/trust.json       (combined TRUSTED | UNTRUSTED | INCONCLUSIVE)
+ * <dir>/gate.json        (release-gate decision, when `genesis gate` ran)
  */
 export function writeTrustBundle(
   dir: string,
@@ -121,6 +142,7 @@ export function writeTrustBundle(
   manifest: Manifest,
   assurance: unknown,
   trust: unknown,
+  gate?: unknown,
 ): void {
   writeEvidenceBundle(join(dir, "evaluation"), spec, result, manifest);
   const write = (rel: string, value: unknown) => {
@@ -129,4 +151,5 @@ export function writeTrustBundle(
   mkdirSync(dir, { recursive: true });
   write("assurance.json", assurance);
   write("trust.json", trust);
+  if (gate !== undefined) write("gate.json", gate);
 }
