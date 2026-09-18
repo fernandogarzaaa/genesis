@@ -97,6 +97,12 @@ export interface EvalTask {
   readonly kind?: TaskKind;
   readonly evaluation_instructions?: string;
   /**
+   * Ordered turn prompts for multi-turn execution. When present, the runner
+   * invokes the subject once per turn with accumulated history instead of
+   * a single shot (see Trial.transcript and the adapter protocol).
+   */
+  readonly turns?: readonly unknown[];
+  /**
    * Ground-truth labels for classification / retrieval / structured tasks.
    * Conventions (see evaluators.ts):
    * - classification: `actual` (or top-level `reference`) holds the true class.
@@ -129,6 +135,12 @@ export interface Trial {
   readonly timed_out: boolean;
   readonly error: string | null;
   readonly output: unknown;
+  /**
+   * Multi-turn transcript (user + assistant messages in order), present only
+   * for tasks with `turns`. Evaluators judge `output` (the final message);
+   * the transcript is preserved evidence, not a second verdict channel.
+   */
+  readonly transcript?: readonly { readonly role: string; readonly content: string }[] | null;
   readonly cost?: TrialCost;
 }
 

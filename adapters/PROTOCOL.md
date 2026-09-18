@@ -30,6 +30,38 @@ Output contract (stdout):
 
 Secrets in stdout/stderr are redacted before storage. Never print tokens.
 
+## Multi-turn subjects (conversation loop)
+
+When a task carries `turns` (ordered prompts), Genesis invokes the subject
+once per turn instead of once per task. Each invocation receives a task
+file shaped like:
+
+```json
+{
+  "id": "task-0001#turn2",
+  "input": "<this turn's prompt>",
+  "context": {
+    "history": [
+      { "role": "user", "content": "<turn 1 prompt>" },
+      { "role": "assistant", "content": "<turn 1 reply>" }
+    ],
+    "turn": 2
+  }
+}
+```
+
+Turn output contract (stdout), same envelope as single-shot plus an
+optional stop signal:
+
+- Plain text or JSON → the turn's assistant message.
+- `{"message": "...", "done": true}` → message recorded, loop stops early.
+- `spec.max_turns` caps iterations; the loop also stops at the last turn.
+
+The evaluator judges the **final** message; the full transcript is
+preserved on the trial as evidence (`transcript` field in results.jsonl).
+`mean_turns` measures loop length. Subjects that cannot converse should
+omit turn handling — single-shot tasks never enter the loop.
+
 ## Evaluators (external judges: `command`, `oracle`, `llm_command`)
 
 Invocation:

@@ -12,19 +12,21 @@
  * ├── statistics.json    — per-arm stats + paired comparisons
  * ├── findings.json
  * ├── evidence/          — evidence.jsonl (every record, digested)
- * └── verdict.json       — verdict with claim boundaries
+ * ├── verdict.json       — verdict with claim boundaries
+ * └── report.html        — offline single-file report rendered from the bundle
  */
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { renderHtmlReport } from "./report-html.js";
 import { canonicalize } from "../shared/canonical.js";
 import { redact } from "../shared/redact.js";
 import { computeEnvDigest } from "../evidence/runner.js";
 import type { ExperimentResult } from "./runner.js";
 import type { EvalSpec } from "./spec.js";
 
-export const GENESIS_VERSION = "0.2.0";
+export const GENESIS_VERSION = "0.3.0";
 
 export interface Manifest {
   readonly genesis_version: string;
@@ -85,13 +87,22 @@ export function writeEvidenceBundle(dir: string, spec: EvalSpec, result: Experim
     write(join(armDir, "metrics.json"), arm.metrics);
   }
   write("statistics.json", {
-    arms: result.arms.map((a) => ({ arm: a.arm, statistics: a.statistics })),
+    arms: result.arms.map((a) => ({
+      arm: a.arm,
+      statistics: a.statistics,
+      ...(a.evaluator_agreement ? { evaluator_agreement: a.evaluator_agreement } : {}),
+    })),
     comparisons: result.comparisons,
   });
   write("findings.json", result.findings);
   const evidenceLines = result.arms.flatMap((a) => a.evidence).map((e) => JSON.stringify(e));
   writeFileSync(join(dir, "evidence", "evidence.jsonl"), `${redact(evidenceLines.join("\n"))}\n`, "utf8");
   write("verdict.json", result.verdict);
+  try {
+    writeFileSync(join(dir, "report.html"), renderHtmlReport(result), "utf8");
+  } catch {
+    // HTML is a lens, never load-bearing: a render failure must not fail the run.
+  }
   if (spec.analysis && spec.analysis.length > 0) {
     // External cross-checks (e.g. interpretability notes): copied verbatim
     // into the bundle so the verdict cites exactly what was reviewed.

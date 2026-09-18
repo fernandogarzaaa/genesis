@@ -1,6 +1,6 @@
 {
   "name": "genesis",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Universal evaluation and assurance for AI-native software: evaluate systems, audit evaluators, gate regressions.",
   "author": {
     "name": "fernandogarzaaa",
