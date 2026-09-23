@@ -13,7 +13,14 @@ from pathlib import Path
 
 import pytest
 
-from dynamic_probe import FunctionNotFound, find_function_source, load_reward_fn, score_completions
+from dynamic_probe import (
+    FunctionNotFound,
+    build_probe_script,
+    extract_reward_source,
+    find_function_source,
+    load_reward_fn,
+    score_completions,
+)
 
 GAMEABLE_REWARD = '''
 import re
@@ -126,13 +133,13 @@ from datasets import Dataset
 """,
     )
 
-    fn = load_reward_fn(tmp_path, "gameable_reward")
+    fn = load_reward_fn(tmp_path, "gameable_reward", allow_unsafe_local=True)
     assert fn.__name__ == "gameable_reward"
 
 
 def test_score_completions_confirms_the_exploit_pattern(tmp_path: Path) -> None:
     write(tmp_path, "env.py", GAMEABLE_REWARD)
-    fn = load_reward_fn(tmp_path, "gameable_reward")
+    fn = load_reward_fn(tmp_path, "gameable_reward", allow_unsafe_local=True)
 
     scores = score_completions(
         fn,
@@ -155,7 +162,7 @@ def test_score_completions_confirms_the_exploit_pattern(tmp_path: Path) -> None:
 
 def test_score_completions_accepts_sync_reward_functions(tmp_path: Path) -> None:
     write(tmp_path, "env.py", SYNC_REWARD)
-    fn = load_reward_fn(tmp_path, "sync_reward")
+    fn = load_reward_fn(tmp_path, "sync_reward", allow_unsafe_local=True)
 
     scores = score_completions(fn, answer="yes", completions={"a": "yes, absolutely", "b": "no"})
 
@@ -167,7 +174,7 @@ def test_load_reward_fn_provides_json_for_json_encoded_answers(tmp_path: Path) -
     function that does `json.loads(answer)` failed with a NameError before
     `json` was added to load_reward_fn's namespace."""
     write(tmp_path, "env.py", JSON_ANSWER_REWARD)
-    fn = load_reward_fn(tmp_path, "scoring_quality_reward")
+    fn = load_reward_fn(tmp_path, "scoring_quality_reward", allow_unsafe_local=True)
 
     answer = json.dumps({"best_score": 8.0, "worst_score": 4.5})
     scores = score_completions(
@@ -186,7 +193,7 @@ def test_load_reward_fn_resolves_same_file_helper_dependencies(tmp_path: Path) -
     constant) failed with a NameError before load_reward_fn resolved the
     same-file dependency closure rather than just the one named function."""
     write(tmp_path, "env.py", HELPER_DEPENDENT_REWARD)
-    fn = load_reward_fn(tmp_path, "coverage_reward")
+    fn = load_reward_fn(tmp_path, "coverage_reward", allow_unsafe_local=True)
 
     scores = score_completions(
         fn,
@@ -214,7 +221,26 @@ async def broken_reward(completion, answer, **kwargs):
     return some_undefined_helper(completion)
 """,
     )
-    fn = load_reward_fn(tmp_path, "broken_reward")
+    fn = load_reward_fn(tmp_path, "broken_reward", allow_unsafe_local=True)
 
     with pytest.raises(NameError):
         score_completions(fn, answer="x", completions={"a": "text"})
+
+
+def test_load_reward_fn_refuses_in_process_exec_by_default(tmp_path: Path) -> None:
+    """Docker is required: the default path must not exec inspected code."""
+    write(tmp_path, "env.py", GAMEABLE_REWARD)
+    with pytest.raises(RuntimeError, match="no longer execs"):
+        load_reward_fn(tmp_path, "gameable_reward")
+
+
+def test_extract_reward_source_is_static_and_builds_runnable_script(tmp_path: Path) -> None:
+    write(tmp_path, "env.py", HELPER_DEPENDENT_REWARD)
+    deps, entry = extract_reward_source(tmp_path, "coverage_reward")
+    assert any("piece_size" in d for d in deps)
+    assert "async def coverage_reward" in entry
+    script = build_probe_script(deps, entry, "coverage_reward", "irrelevant", {"a": json.dumps({"piece": "mono"})})
+    assert "--net=none" not in script  # flags live on the docker command, not the script
+    assert "coverage_reward" in script
+    # The assembled script must compile without importing the environment.
+    compile(script, "<probe>", "exec")

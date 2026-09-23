@@ -132,7 +132,9 @@ export class CommandSubject implements SubjectAdapter {
     this.#runner = runner;
   }
   describe(): Record<string, unknown> {
-    return { kind: "command", command: this.#spec.command, timeout_ms: this.#spec.timeout_ms };
+    const out: Record<string, unknown> = { kind: "command", command: this.#spec.command };
+    if (this.#spec.timeout_ms !== undefined) out.timeout_ms = this.#spec.timeout_ms;
+    return out;
   }
   async run(task: EvalTask): Promise<SubjectResult> {
     const started = Date.now();
@@ -163,6 +165,13 @@ export class CommandSubject implements SubjectAdapter {
           output: null, raw_stdout: redact(result.stdout), raw_stderr: redact(result.stderr),
           exit_code: result.exit_code, duration_ms: Date.now() - started,
           timed_out: true, error: `subject timed out`,
+        };
+      }
+      if (result.output_limited) {
+        return {
+          output: null, raw_stdout: redact(result.stdout), raw_stderr: redact(result.stderr),
+          exit_code: result.exit_code, duration_ms: Date.now() - started,
+          timed_out: false, error: `subject output exceeded per-stream byte limit`,
         };
       }
       const out = result.stdout.trim();
@@ -217,7 +226,18 @@ export class HttpSubject implements SubjectAdapter {
         });
         // The deadline covers the body too: headers resolving first must not
         // disarm the timeout while a stalled body streams forever.
-        const text = await res.text();
+        // Cap HTTP bodies (default 1 MiB): unbounded res.text() is a memory-
+        // exhaustion path for adversarial endpoints.
+        const MAX_HTTP_BODY_BYTES = 1_048_576;
+        const body = await readCappedBody(res, MAX_HTTP_BODY_BYTES);
+        if (body.limited) {
+          return {
+            output: null, raw_stdout: "", raw_stderr: "",
+            exit_code: res.ok ? 0 : res.status, duration_ms: Date.now() - started,
+            timed_out: false, error: `http response body exceeded ${MAX_HTTP_BODY_BYTES} byte limit`,
+          };
+        }
+        const text = body.text;
         let output: unknown = text;
         try {
           output = JSON.parse(text);
@@ -259,4 +279,33 @@ export function splitCommand(command: string): string[] {
   }
   if (cur) out.push(cur);
   return out;
+}
+
+/** Read a fetch body up to maxBytes; reports `limited` instead of buffering forever. */
+async function readCappedBody(res: Response, maxBytes: number): Promise<{ text: string; limited: boolean }> {
+  // Prefer streaming when available so an adversarial body can't exhaust memory.
+  const reader = res.body?.getReader();
+  if (!reader) {
+    const text = await res.text();
+    return text.length > maxBytes ? { text: text.slice(0, maxBytes), limited: true } : { text, limited: false };
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.length;
+      if (total > maxBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // ignore
+        }
+        return { text: Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf8").slice(0, maxBytes), limited: true };
+      }
+      chunks.push(value);
+    }
+  }
+  return { text: Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf8"), limited: false };
 }

@@ -93,9 +93,9 @@ describe("benchmark registry", () => {
 
 describe("benchmark templates in specs", () => {
   it("parses a subject-less spec only with a benchmark block", () => {
-    const withBlock = validateSpec({ name: "t", benchmark: { version: "1.0.0" }, dataset: {}, evaluator: { type: "exact" } });
+    const withBlock = validateSpec({ name: "t", benchmark: { version: "1.0.0" }, dataset: { inline: [{ input: "a" }] }, evaluator: { type: "exact" } });
     expect(withBlock.subject).toBeUndefined();
-    expect(() => validateSpec({ name: "t", dataset: {}, evaluator: { type: "exact" } })).toThrow();
+    expect(() => validateSpec({ name: "t", dataset: { inline: [{ input: "a" }] }, evaluator: { type: "exact" } })).toThrow();
   });
 
   it("runExperiment refuses a subject-less spec instead of inventing one", async () => {

@@ -135,11 +135,25 @@ export function validateSpec(raw: unknown, sourceName = "<inline>"): EvalSpec {
   if ((!subject || typeof subject !== "object") && !isBenchmark) {
     throw new SpecError(`${sourceName}: spec.subject is required (benchmarks declare it via --subject at run time)`);
   }
+  if (subject && typeof subject === "object") validateSubjectSpec(subject as Record<string, unknown>, `${sourceName}: spec.subject`);
+  if (s.baseline !== undefined) {
+    if (!s.baseline || typeof s.baseline !== "object") throw new SpecError(`${sourceName}: spec.baseline must be an object`);
+    validateSubjectSpec(s.baseline as Record<string, unknown>, `${sourceName}: spec.baseline`);
+  }
+  if (s.ablations !== undefined) {
+    if (!Array.isArray(s.ablations)) throw new SpecError(`${sourceName}: spec.ablations must be an array`);
+    for (const [i, abl] of (s.ablations as unknown[]).entries()) {
+      if (!abl || typeof abl !== "object") throw new SpecError(`${sourceName}: spec.ablations[${i}] must be an object`);
+      const a = abl as Record<string, unknown>;
+      if (typeof a.name !== "string" || !a.name) throw new SpecError(`${sourceName}: spec.ablations[${i}].name must be a nonempty string`);
+      if (!a.subject || typeof a.subject !== "object") throw new SpecError(`${sourceName}: spec.ablations[${i}].subject is required`);
+      validateSubjectSpec(a.subject as Record<string, unknown>, `${sourceName}: spec.ablations[${i}].subject`);
+    }
+  }
+  validateDatasetSpec(dataset, sourceName);
   const evaluator = s.evaluator as Record<string, unknown> | undefined;
   if (!evaluator || typeof evaluator !== "object") throw new SpecError(`${sourceName}: spec.evaluator is required`);
-  if (typeof (evaluator as Record<string, unknown>).type !== "string") {
-    throw new SpecError(`${sourceName}: spec.evaluator.type is required`);
-  }
+  validateEvaluatorSpec(evaluator, `${sourceName}: spec.evaluator`);
 
   let claim: Claim | undefined;
   const claimRaw = s.claim;
@@ -152,6 +166,38 @@ export function validateSpec(raw: unknown, sourceName = "<inline>"): EvalSpec {
   const repetitions = s.repetitions;
   if (repetitions !== undefined && (!Number.isInteger(repetitions) || (repetitions as number) < 1)) {
     throw new SpecError(`${sourceName}: repetitions must be an integer >= 1`);
+  }
+  if (s.seeds !== undefined) {
+    if (!Array.isArray(s.seeds) || s.seeds.length === 0) {
+      throw new SpecError(`${sourceName}: seeds must be a nonempty array`);
+    }
+    for (const seed of s.seeds as unknown[]) {
+      if (typeof seed !== "number" && typeof seed !== "string") {
+        throw new SpecError(`${sourceName}: seeds must contain only numbers/strings`);
+      }
+    }
+  }
+  if (s.timeout_ms !== undefined && (typeof s.timeout_ms !== "number" || !Number.isFinite(s.timeout_ms) || (s.timeout_ms as number) < 0)) {
+    throw new SpecError(`${sourceName}: timeout_ms must be a finite number >= 0`);
+  }
+  if (s.metrics !== undefined) {
+    if (!Array.isArray(s.metrics)) throw new SpecError(`${sourceName}: metrics must be an array of strings`);
+    for (const m of s.metrics as unknown[]) {
+      if (typeof m !== "string" || !m) throw new SpecError(`${sourceName}: metrics must be nonempty strings`);
+    }
+  }
+  if (s.thresholds !== undefined) {
+    if (!s.thresholds || typeof s.thresholds !== "object" || Array.isArray(s.thresholds)) {
+      throw new SpecError(`${sourceName}: thresholds must be an object`);
+    }
+    for (const [k, v] of Object.entries(s.thresholds as Record<string, unknown>)) {
+      if (typeof v !== "string" || !/^(>=|<=|>|<|==|!=)\s*-?\d+(\.\d+)?$/.test(v.trim())) {
+        throw new SpecError(`${sourceName}: thresholds["${k}"] must look like ">= 0.8"`);
+      }
+    }
+  }
+  if (s.sanity_threshold !== undefined && (typeof s.sanity_threshold !== "number" || !Number.isFinite(s.sanity_threshold))) {
+    throw new SpecError(`${sourceName}: sanity_threshold must be a finite number`);
   }
 
   return {
@@ -184,6 +230,83 @@ export function validateSpec(raw: unknown, sourceName = "<inline>"): EvalSpec {
     ...(Array.isArray(s.analysis) ? { analysis: s.analysis as string[] } : {}),
     ...((s.output as object) ? { output: s.output as EvalSpec["output"] } : {}),
   };
+}
+
+const EVALUATOR_TYPES = new Set([
+  "exact", "regex", "json_schema", "javascript", "command", "llm_command",
+  "human", "oracle", "composite", "pass_through", "classification",
+  "retrieval", "trajectory", "refusal",
+]);
+
+const DATASET_FORMATS = new Set(["json", "jsonl", "csv", "yaml", "text", "dir", "auto"]);
+
+function validateSubjectSpec(s: Record<string, unknown>, where: string): void {
+  const transports = ["command", "http", "inline"].filter((k) => s[k] !== undefined);
+  if (transports.length === 0) throw new SpecError(`${where}: one of command, http, or inline is required`);
+  if (transports.length > 1) throw new SpecError(`${where}: exactly one subject transport is required (got ${transports.join(", ")})`);
+  if (s.command !== undefined && typeof s.command !== "string") throw new SpecError(`${where}.command must be a string`);
+  if (s.inline !== undefined && typeof s.inline !== "string") throw new SpecError(`${where}.inline must be a string`);
+  if (s.http !== undefined) {
+    if (!s.http || typeof s.http !== "object") throw new SpecError(`${where}.http must be an object`);
+    const h = s.http as Record<string, unknown>;
+    if (typeof h.url !== "string" || !h.url) throw new SpecError(`${where}.http.url must be a nonempty string`);
+  }
+  if (s.timeout_ms !== undefined && (typeof s.timeout_ms !== "number" || !Number.isFinite(s.timeout_ms) || (s.timeout_ms as number) < 0)) {
+    throw new SpecError(`${where}.timeout_ms must be a finite number >= 0`);
+  }
+}
+
+function validateDatasetSpec(d: Record<string, unknown>, sourceName: string): void {
+  const sources = ["path", "inline", "stdin"].filter((k) => d[k] !== undefined && d[k] !== false);
+  if (sources.length === 0) throw new SpecError(`${sourceName}: dataset needs one of path, inline, or stdin:true`);
+  if (sources.length > 1) throw new SpecError(`${sourceName}: dataset sources are exclusive (got ${sources.join(", ")})`);
+  if (d.format !== undefined && (typeof d.format !== "string" || !DATASET_FORMATS.has(d.format as string))) {
+    throw new SpecError(`${sourceName}: dataset.format must be one of ${[...DATASET_FORMATS].join(", ")}`);
+  }
+}
+
+function validateEvaluatorSpec(e: Record<string, unknown>, where: string): void {
+  if (typeof e.type !== "string") throw new SpecError(`${where}.type is required`);
+  if (!EVALUATOR_TYPES.has(e.type as string)) throw new SpecError(`${where}.type must be one of ${[...EVALUATOR_TYPES].join(", ")}`);
+  const need = (field: string) => {
+    if (e[field] === undefined) throw new SpecError(`${where}: evaluator ${e.type} requires "${field}"`);
+  };
+  switch (e.type as string) {
+    case "regex":
+      need("pattern");
+      break;
+    case "json_schema":
+      need("schema");
+      break;
+    case "javascript":
+      need("script");
+      break;
+    case "command":
+    case "oracle":
+    case "llm_command":
+      need("command");
+      break;
+    case "human":
+      need("judgments");
+      break;
+    case "composite": {
+      if (!Array.isArray(e.evaluators) || (e.evaluators as unknown[]).length === 0) {
+        throw new SpecError(`${where}: evaluator composite requires nonempty evaluators[]`);
+      }
+      for (const [i, sub] of (e.evaluators as Record<string, unknown>[]).entries()) {
+        if (!sub || typeof sub !== "object") throw new SpecError(`${where}.evaluators[${i}] must be an object`);
+        validateEvaluatorSpec(sub as Record<string, unknown>, `${where}.evaluators[${i}]`);
+      }
+      if (e.mode !== undefined && e.mode !== "all" && e.mode !== "any") {
+        throw new SpecError(`${where}.mode must be "all" or "any"`);
+      }
+      break;
+    }
+    case "trajectory":
+      break;
+    default:
+      break;
+  }
 }
 
 /**

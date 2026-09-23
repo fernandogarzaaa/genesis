@@ -163,7 +163,11 @@ export interface EvidenceRecord {
   readonly task_id: string;
   readonly trial_id: string;
   readonly observation: Observation;
+  /** Full trial snapshot this observation judges (present on v2+ records). */
+  readonly trial?: Trial;
   readonly artifact_digest: string | null;
+  /** Verdict-only digest ({trial_id, task_id, observation}) for historic bundles. */
+  readonly legacy_digest?: string;
   readonly provenance: Record<string, unknown>;
   readonly confidence: number | null;
 }

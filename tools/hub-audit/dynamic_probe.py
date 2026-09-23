@@ -12,9 +12,10 @@ dependencies are installed, because a reward function is almost always a
 pure function of (completion, answer) with no need for the rest of the
 package. The function is located by name via AST; its exact source segment,
 plus the transitive closure of same-file module-level helper functions and
-constants it references, is exec'd in an isolated namespace -- the
-environment package itself is never imported, so this works even when its
-dependencies are absent.
+constants it references, is executed in a disposable Docker container
+(--net=none, read-only FS, memory/CPU/pids limits, wall-clock timeout) --
+never in the auditor process. The old in-process `exec` namespace was name
+separation only, NOT a security boundary, and must not be mistaken for one.
 
 See docs/assurance/findings/HUB-003-build-optimization-reward-gaming.md and
 HUB-004-carcassonne-placement-reward-defects.md for confirmed results.
@@ -28,9 +29,17 @@ import inspect
 import json
 import math
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+DOCKER_IMAGE = "python:3.12-slim"
+DOCKER_TIMEOUT_S = 60
+DOCKER_MEMORY = "256m"
+DOCKER_CPUS = "1.0"
 
 
 class FunctionNotFound(Exception):
@@ -110,17 +119,29 @@ def _resolve_dependencies(tree: ast.Module, source: str, entry: ast.AST) -> list
     return list(resolved.values())
 
 
-def load_reward_fn(env_dir: Path, func_name: str) -> Callable[..., Any]:
-    """Load a named reward function without importing the environment
-    package. The namespace carries the stdlib modules reward functions
-    commonly reach for at call time (regex extraction, JSON-encoded answers,
-    numeric tolerance), plus the transitive closure of same-file, module-level
-    helper functions and constants the target actually references (see
-    `_resolve_dependencies`) -- not an import of the environment package
-    itself, which this deliberately never does. If the function still depends
-    on a name neither of those provides (an import, a class, a helper defined
-    inside another function), that fails loudly as a NameError rather than
-    silently."""
+def load_reward_fn(
+    env_dir: Path, func_name: str, *, allow_unsafe_local: bool = False
+) -> Callable[..., Any]:
+    """Load a named reward function WITHOUT executing inspected code.
+
+    By default this only EXTRACTS source (pure AST, no exec) and returns a
+    caller that replays it inside Docker (see score_completions_docker).
+    Passing allow_unsafe_local=True restores the legacy in-process exec for
+    offline dev only — it runs third-party code in the auditor process with
+    full builtins and must never be used on untrusted environments.
+    """
+    if not allow_unsafe_local:
+        raise RuntimeError(
+            "load_reward_fn without allow_unsafe_local=True no longer execs code. "
+            "Use extract_reward_source() + score_completions_docker() instead."
+        )
+    import warnings
+
+    warnings.warn(
+        "allow_unsafe_local execs inspected third-party code in-process: "
+        "name separation only, NOT a sandbox. Docker is required for real use.",
+        stacklevel=2,
+    )
     path, source_segment = find_function_source(env_dir, func_name)
     module_source = path.read_text()
     tree = ast.parse(module_source, filename=str(path))
@@ -134,6 +155,101 @@ def load_reward_fn(env_dir: Path, func_name: str) -> Callable[..., Any]:
         exec(compile(dep_source, f"<{func_name}-dependency>", "exec"), namespace)
     exec(compile(source_segment, f"<{func_name}>", "exec"), namespace)
     return namespace[func_name]
+
+
+def extract_reward_source(env_dir: Path, func_name: str) -> tuple[list[str], str]:
+    """Pure-static extraction: (dependency segments, entry segment). No exec."""
+    _, source_segment = find_function_source(env_dir, func_name)
+    # Re-parse the defining module for dependency closure.
+    for path in sorted(env_dir.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            module_source = path.read_text()
+            tree = ast.parse(module_source, filename=str(path))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        entry = next(
+            (n for n in ast.walk(tree)
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func_name),
+            None,
+        )
+        if entry is not None and ast.get_source_segment(module_source, entry) == source_segment:
+            return _resolve_dependencies(tree, module_source, entry), source_segment
+    # Fallback: search again (segment match by equality can miss formatting).
+    path, _ = find_function_source(env_dir, func_name)
+    module_source = path.read_text()
+    tree = ast.parse(module_source, filename=str(path))
+    entry = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func_name
+    )
+    return _resolve_dependencies(tree, module_source, entry), source_segment
+
+
+def build_probe_script(deps: list[str], entry: str, func_name: str, answer: str, completions: dict[str, str]) -> str:
+    """Assemble a self-contained scoring script for the container."""
+    payload = json.dumps({"func": func_name, "answer": answer, "completions": completions})
+    parts = [
+        "import asyncio, inspect, json, math, re, sys",
+        "from typing import Any, Optional",
+        *deps,
+        entry,
+        f"_PAYLOAD = {payload!r}",
+        "async def _call(fn, *a, **k):\n    r = fn(*a, **k)\n    return await r if inspect.isawaitable(r) else r",
+        "async def _main():\n"
+        "    p = json.loads(_PAYLOAD)\n"
+        "    fn = globals()[p['func']]\n"
+        "    out = {}\n"
+        "    for label, text in p['completions'].items():\n"
+        "        t = [{'role': 'assistant', 'content': text}]\n"
+        "        out[label] = await _call(fn, t, p['answer'])\n"
+        "    sys.stdout.write(json.dumps(out))",
+        "asyncio.run(_main())",
+    ]
+    return "\n\n".join(parts)
+
+
+def score_completions_docker(
+    env_dir: Path,
+    func_name: str,
+    answer: str,
+    completions: dict[str, str],
+    *,
+    image: str = DOCKER_IMAGE,
+    timeout_s: int = DOCKER_TIMEOUT_S,
+    memory: str = DOCKER_MEMORY,
+    cpus: str = DOCKER_CPUS,
+    max_output_bytes: int = 65536,
+) -> dict[str, float]:
+    """Score completions inside a disposable Docker container. Required path."""
+    if shutil.which("docker") is None:
+        raise RuntimeError("docker is required to probe reward functions (no local-exec fallback)")
+    deps, entry = extract_reward_source(env_dir, func_name)
+    script = build_probe_script(deps, entry, func_name, answer, completions)
+    with tempfile.TemporaryDirectory(prefix="genesis-probe-") as tmp:
+        probe = Path(tmp) / "probe.py"
+        probe.write_text(script, encoding="utf8")
+        cmd = [
+            "docker", "run", "--rm", "--net=none", "--read-only",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+            "--memory", memory, "--cpus", cpus, "--pids-limit", "64",
+            "-v", f"{probe}:/probe/probe.py:ro",
+            image, "python", "/probe/probe.py",
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(f"probe container timed out after {timeout_s}s") from e
+    if proc.returncode != 0:
+        err = (proc.stderr or b"").decode("utf8", "replace")[:2000]
+        raise RuntimeError(f"probe container failed (exit {proc.returncode}): {err}")
+    out = (proc.stdout or b"")[:max_output_bytes].decode("utf8", "replace")
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"probe container returned non-JSON output: {out[:500]}") from e
+    return {k: float(v) for k, v in data.items()}
 
 
 async def _call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -163,11 +279,24 @@ def main() -> int:
     parser.add_argument("func_name", help="the reward function's name, e.g. build_optimization_reward")
     parser.add_argument("answer", help="the ground-truth `answer` string for one dataset row")
     parser.add_argument("completions", type=Path, help="a JSON file of {label: completion text} to score")
+    parser.add_argument("--docker-image", default=DOCKER_IMAGE)
+    parser.add_argument("--timeout-s", type=int, default=DOCKER_TIMEOUT_S)
+    parser.add_argument("--memory", default=DOCKER_MEMORY)
+    parser.add_argument("--cpus", default=DOCKER_CPUS)
+    parser.add_argument("--allow-local-exec", action="store_true",
+                        help="DEV ONLY: exec inspected code in-process (unsafe, never on untrusted envs)")
     args = parser.parse_args()
 
-    fn = load_reward_fn(args.env_dir, args.func_name)
     completions = json.loads(args.completions.read_text())
-    scores = score_completions(fn, args.answer, completions)
+    if args.allow_local_exec:
+        fn = load_reward_fn(args.env_dir, args.func_name, allow_unsafe_local=True)
+        scores = score_completions(fn, args.answer, completions)
+    else:
+        scores = score_completions_docker(
+            args.env_dir, args.func_name, args.answer, completions,
+            image=args.docker_image, timeout_s=args.timeout_s,
+            memory=args.memory, cpus=args.cpus,
+        )
 
     width = max(len(label) for label in scores)
     for label, score in scores.items():

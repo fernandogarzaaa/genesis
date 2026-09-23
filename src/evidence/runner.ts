@@ -28,12 +28,16 @@ export interface RunResult {
   readonly ended_at: string;
   readonly timed_out: boolean;
   readonly spawn_error: string | null;
+  /** True when stdout/stderr hit the per-stream byte cap (distinct from timeout). */
+  readonly output_limited?: boolean;
 }
 
 export interface RunOptions {
   readonly cwd: string;
   readonly timeoutMs?: number;
   readonly env?: Record<string, string>;
+  /** Per-stream byte cap (default 1 MiB). Prevents memory exhaustion. */
+  readonly maxBytes?: number;
 }
 
 export interface Runner {
@@ -58,7 +62,7 @@ export class SubprocessRunner implements Runner {
       return Promise.resolve({
         command, exit_code: null, stdout: "", stderr: "",
         started_at, ended_at: started_at, timed_out: false,
-        spawn_error: "empty command",
+        spawn_error: "empty command", output_limited: false,
       });
     }
 
@@ -70,29 +74,76 @@ export class SubprocessRunner implements Runner {
     Object.assign(env, options.env ?? {});
 
     return new Promise<RunResult>((resolve) => {
+      const maxBytes = options.maxBytes ?? 1_048_576;
       const child = spawn(bin, args, {
         cwd: options.cwd,
         env,
         stdio: ["ignore", "pipe", "pipe"],
+        // New process group so timeout kills descendants, not just the child.
+        detached: process.platform !== "win32",
       });
 
       let stdout = "";
       let stderr = "";
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let outputLimited = false;
       let timedOut = false;
       let settled = false;
 
+      const killTree = () => {
+        try {
+          if (child.pid !== undefined && process.platform !== "win32") {
+            process.kill(-child.pid, "SIGKILL");
+          } else {
+            child.kill("SIGKILL");
+          }
+        } catch {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // Already exited.
+          }
+        }
+      };
+
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill("SIGKILL");
+        killTree();
       }, options.timeoutMs ?? this.#defaultTimeoutMs);
 
-      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
-      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+      child.stdout.on("data", (chunk: Buffer) => {
+        if (stdoutBytes >= maxBytes) {
+          outputLimited = true;
+          return;
+        }
+        const remaining = maxBytes - stdoutBytes;
+        const slice = chunk.subarray(0, remaining);
+        stdout += slice.toString("utf8");
+        stdoutBytes += slice.length;
+        if (chunk.length > remaining) outputLimited = true;
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        if (stderrBytes >= maxBytes) {
+          outputLimited = true;
+          return;
+        }
+        const remaining = maxBytes - stderrBytes;
+        const slice = chunk.subarray(0, remaining);
+        stderr += slice.toString("utf8");
+        stderrBytes += slice.length;
+        if (chunk.length > remaining) outputLimited = true;
+      });
 
       const finish = (exit_code: number | null, spawn_error: string | null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        // Output-limit is a distinct failure mode (not a timeout): surface it
+        // so callers can mark the trial unjudged instead of scoring a prefix.
+        const limitedError = outputLimited && !spawn_error
+          ? "output exceeded per-stream byte limit"
+          : spawn_error;
         resolve({
           command,
           exit_code,
@@ -103,7 +154,8 @@ export class SubprocessRunner implements Runner {
           started_at,
           ended_at: new Date().toISOString(),
           timed_out: timedOut,
-          spawn_error,
+          spawn_error: limitedError,
+          output_limited: outputLimited,
         });
       };
 
