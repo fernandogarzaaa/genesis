@@ -242,9 +242,9 @@ async function runArm(
         source: `subject:${subjectName}|evaluator:${evaluator.name}`,
         timestamp: t1, task_id: task.id, trial_id,
         trial, observation, artifact_digest: null,
-        legacy_digest: legacyDigest,
+          legacy_digest: legacyDigest,
         provenance,
-        confidence: null,
+          confidence: null,
       };
       const digest = hashCanonicalExcluding(
         stripUndefined(evidenceBody) as unknown as Record<string, unknown>,
