@@ -1,7 +1,7 @@
 name: multiturn-triage
 claim:
   id: claim-mt-001
-  statement: "The triage agent resolves two-turn customer conversations with the correct final disposition."
+  statement: "The triage agent resolves three-turn customer conversations with the correct final disposition."
   hypothesis:
     primary:
       metric: task_success

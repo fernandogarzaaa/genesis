@@ -22,6 +22,17 @@ export function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Escape a bundle-sourced value for HTML interpolation. Bundle files are
+ * parsed with JSON.parse + casts only, so a crafted bundle can smuggle
+ * markup in a "numeric" field (e.g. `"repetition": "<img src=x
+ * onerror=...>"`). Every interpolated bundle value goes through escapeHtml,
+ * even ones the type system claims are numbers.
+ */
+export function num(v: unknown): string {
+  return escapeHtml(String(v));
+}
+
 const VERDICT_COLORS: Record<string, string> = {
   SUPPORTED: "#3fb950",
   FALSIFIED: "#f85149",
@@ -101,13 +112,13 @@ input#q{background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:
 <tr><th>Tested</th><td>${escapeHtml(v.scope.tested).slice(0, 500)}</td></tr>
 <tr><th>Not tested</th><td>${escapeHtml(v.scope.not_tested)}</td></tr>
 <tr><th>Dataset</th><td class="mono">${escapeHtml(v.scope.dataset)} (${escapeHtml(v.scope.dataset_digest.slice(0, 20))}…)</td></tr>
-<tr><th>Samples</th><td>N=${v.scope.sample_size}, repetitions=${v.scope.repetitions}</td></tr>
+<tr><th>Samples</th><td>N=${num(v.scope.sample_size)}, repetitions=${num(v.scope.repetitions)}</td></tr>
 <tr><th>Metrics</th><td class="mono">${escapeHtml(v.scope.metrics.join(", "))}</td></tr>
 </table></div>
 ${result.arms.map(renderArm).join("\n")}
 ${result.comparisons.length > 0 ? `<div class="card"><h2>Comparisons (paired, descriptive)</h2><table><tr><th>Metric</th><th>Baseline</th><th>Treatment</th><th>Δ</th><th>95% CI of Δ</th></tr>${result.comparisons.map((c) => `<tr><td class="mono">${escapeHtml(c.metric)}</td><td>${fmt(c.baseline_mean)}</td><td>${fmt(c.treatment_mean)}</td><td>${fmt(c.delta)}</td><td class="mono">[${fmt(c.ci95_delta.low)}, ${fmt(c.ci95_delta.high)}]</td></tr>`).join("")}</table></div>` : ""}
 ${result.findings.length > 0 ? `<div class="card"><h2>Findings (${result.findings.length})</h2>${result.findings.map((f) => `<p><span class="chip sev-${escapeHtml(f.severity)}">${escapeHtml(f.severity)}</span> <strong>${escapeHtml(f.category)}</strong> — ${escapeHtml(f.summary)}${f.possible_cause ? `<br><span class="mono">possible cause: ${escapeHtml(f.possible_cause)}</span>` : ""}</p>`).join("")}</div>` : ""}
-${v.hypothesis_results?.length ? `<div class="card"><h2>Hypotheses</h2><table>${v.hypothesis_results.map((h) => `<tr><td>${h.satisfied === true ? "✓" : h.satisfied === false ? "✗" : "?"}</td><td class="mono">${escapeHtml(h.metric)} ${escapeHtml(h.operator)} ${h.threshold}</td><td>observed ${h.observed === null ? "n/a" : fmt(h.observed)}</td></tr>`).join("")}</table></div>` : ""}
+${v.hypothesis_results?.length ? `<div class="card"><h2>Hypotheses</h2><table>${v.hypothesis_results.map((h) => `<tr><td>${h.satisfied === true ? "✓" : h.satisfied === false ? "✗" : "?"}</td><td class="mono">${escapeHtml(h.metric)} ${escapeHtml(h.operator)} ${num(h.threshold)}</td><td>observed ${h.observed === null ? "n/a" : fmt(h.observed)}</td></tr>`).join("")}</table></div>` : ""}
 <div class="card"><h2>Trials (${rows.length})</h2>
 <input id="q" type="search" placeholder="filter by task, trial, or output…" oninput="filterTrials(this.value)">
 <div id="trials">${rows.map(renderTrial).join("")}</div></div>
@@ -122,11 +133,11 @@ function renderArm(arm: ExperimentResult["arms"][number]): string {
   const rows = arm.metrics.map((m) => {
     const stat = arm.statistics.find((s) => s?.metric === m.metric);
     const bar = stat ? ciBar(stat.ci95.low, stat.ci95.high, stat.mean) : "";
-    const interval = stat ? `[${fmt(stat.ci95.low)}–${fmt(stat.ci95.high)}, n=${stat.n}]` : `[n=${m.n}, no interval]`;
+    const interval = stat ? `[${fmt(stat.ci95.low)}–${fmt(stat.ci95.high)}, n=${num(stat.n)}]` : `[n=${num(m.n)}, no interval]`;
     return `<tr><td class="mono">${escapeHtml(m.metric)}</td><td>${fmt(m.value)}${m.unit ? ` ${escapeHtml(m.unit)}` : ""}</td><td class="mono">${interval}</td><td>${bar}</td></tr>`;
   }).join("");
   const agreement = arm.evaluator_agreement
-    ? `<tr><td class="mono">inter-rater κ</td><td>${arm.evaluator_agreement.cohen_kappa === null ? "n/a" : arm.evaluator_agreement.cohen_kappa.toFixed(4)}</td><td class="mono">n=${arm.evaluator_agreement.n}${arm.evaluator_agreement.interpretation ? `, ${escapeHtml(arm.evaluator_agreement.interpretation)}` : ""}</td><td></td></tr>`
+    ? `<tr><td class="mono">inter-rater κ</td><td>${arm.evaluator_agreement.cohen_kappa === null ? "n/a" : arm.evaluator_agreement.cohen_kappa.toFixed(4)}</td><td class="mono">n=${num(arm.evaluator_agreement.n)}${arm.evaluator_agreement.interpretation ? `, ${escapeHtml(arm.evaluator_agreement.interpretation)}` : ""}</td><td></td></tr>`
     : "";
   return `<div class="card"><h2>Arm: ${escapeHtml(arm.arm)} — ${arm.trials.length} trials</h2><table><tr><th>Metric</th><th>Value</th><th>Interval</th><th></th></tr>${rows}${agreement}</table></div>`;
 }
@@ -142,7 +153,7 @@ function renderTrial(t: TrialRow): string {
   const chip = t.passed === true
     ? `<span class="chip pass">pass</span>`
     : t.passed === false ? `<span class="chip fail">fail</span>` : `<span class="chip null">unjudged</span>`;
-  return `<details class="trial"><summary>${chip} <span class="mono">${escapeHtml(t.task_id)} · ${escapeHtml(t.trial_id)} · rep ${t.repetition} · ${t.duration_ms}ms${t.score !== null ? ` · score ${fmt(Number(t.score))}` : ""}</span><br>${escapeHtml(t.output.slice(0, 160))}</summary><pre>${escapeHtml(t.output)}</pre></details>`;
+  return `<details class="trial"><summary>${chip} <span class="mono">${escapeHtml(t.task_id)} · ${escapeHtml(t.trial_id)} · rep ${num(t.repetition)} · ${num(t.duration_ms)}ms${t.score !== null ? ` · score ${fmt(Number(t.score))}` : ""}</span><br>${escapeHtml(t.output.slice(0, 160))}</summary><pre>${escapeHtml(t.output)}</pre></details>`;
 }
 
 function excerpt(v: unknown): string {

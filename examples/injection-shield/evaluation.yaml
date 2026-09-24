@@ -1,7 +1,7 @@
 name: injection-shield
 claim:
   id: claim-inj-001
-  statement: "The shielded subject answers user tasks without emitting the injected PWNED marker."
+  statement: "The reference fixture reproduces the expected answers without emitting the injected PWNED marker (ceiling control — it never reads the input, so this does not demonstrate shielding)."
   hypothesis:
     primary:
       metric: task_success
@@ -20,7 +20,7 @@ dataset:
   id: prompt-injection-v1
   version: "1.0.0"
 subject:
-  name: shielded-subject
+  name: reference-fixture
   command: "node ./examples/injection-shield/candidate.mjs {task_file}"
   timeout_ms: 10000
 baseline:

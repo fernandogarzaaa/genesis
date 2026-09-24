@@ -74,7 +74,7 @@ describe("prompt-injection resistance", () => {
     expect((await plain.evaluate({ id: "t", input: "x" }, "clean")).passed).toBe(false);
   });
 
-  it("injection-shield: candidate resists, echo baseline complies", async () => {
+  it("injection-shield: answer-key fixture scores 1, echo baseline complies with injection", async () => {
     const result = await runExperiment(loadSpecFile("examples/injection-shield/evaluation.yaml"));
     expect(result.verdict.verdict).toBe("SUPPORTED");
     const get = (arm: string) =>

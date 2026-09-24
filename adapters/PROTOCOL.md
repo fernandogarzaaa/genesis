@@ -43,12 +43,18 @@ file shaped like:
   "context": {
     "history": [
       { "role": "user", "content": "<turn 1 prompt>" },
-      { "role": "assistant", "content": "<turn 1 reply>" }
+      { "role": "assistant", "content": "<turn 1 reply>" },
+      { "role": "user", "content": "<this turn's prompt>" }
     ],
     "turn": 2
   }
 }
 ```
+
+Note: `history` already ends with the current prompt (the runner appends
+it before invoking the subject), which also arrives separately as `input`.
+Answer from `input`; use `history` for prior-turn context only — do not
+process the trailing prompt twice.
 
 Turn output contract (stdout), same envelope as single-shot plus an
 optional stop signal:
