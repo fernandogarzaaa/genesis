@@ -367,42 +367,30 @@ export class HumanEvaluator implements Evaluator {
   readonly #judgments = new Map<string, { score: number | null; passed: boolean | null; label: string | null }>();
   readonly #path: string;
   readonly #secondaryPath?: string;
+  // Cached at construction: describe() runs per evidence record, so rereading
+  // the secondary file there is O(N²) I/O over N trials. Load once instead.
+  readonly #agreementCache: { cohen_kappa: number | null; n: number; interpretation: string | null } | null;
   constructor(spec: EvaluatorSpec) {
     if (!spec.judgments) throw new Error("evaluator human: judgments path is required");
     this.#path = spec.judgments;
     this.#secondaryPath = spec.judgments_secondary;
     loadJudgments(spec.judgments, this.#judgments);
+    this.#agreementCache = this.#secondaryPath ? computeAgreement(this.#judgments, this.#secondaryPath) : null;
   }
   describe(): Record<string, unknown> {
-    const agreement = this.agreement();
     return {
       type: "human", judgments: this.#path, count: this.#judgments.size,
       ...(this.#secondaryPath ? { judgments_secondary: this.#secondaryPath } : {}),
-      ...(agreement ? { agreement } : {}),
+      ...(this.#agreementCache ? { agreement: this.#agreementCache } : {}),
     };
   }
   /**
    * Inter-rater agreement (Cohen's κ) between primary and secondary
    * judgments over overlapping tasks, or null when no second rater exists.
+   * Precomputed once — no per-call file I/O.
    */
   agreement(): { cohen_kappa: number | null; n: number; interpretation: string | null } | null {
-    if (!this.#secondaryPath) return null;
-    const secondary = new Map<string, { score: number | null; passed: boolean | null; label: string | null }>();
-    loadJudgments(this.#secondaryPath, secondary);
-    const ids = [...this.#judgments.keys()].filter((id) => secondary.has(id));
-    const a: unknown[] = [];
-    const b: unknown[] = [];
-    for (const id of ids) {
-      const j1 = this.#judgments.get(id);
-      const j2 = secondary.get(id);
-      const l1 = j1?.label ?? (j1?.passed === true ? true : j1?.passed === false ? false : j1?.score ?? null);
-      const l2 = j2?.label ?? (j2?.passed === true ? true : j2?.passed === false ? false : j2?.score ?? null);
-      if (l1 === null || l1 === undefined || l2 === null || l2 === undefined) continue;
-      a.push(l1);
-      b.push(l2);
-    }
-    const r = cohenKappa(a, b);
-    return { cohen_kappa: r.kappa, n: r.n, interpretation: r.interpretation };
+    return this.#agreementCache;
   }
   async evaluate(task: EvalTask, _output: unknown): Promise<Omit<Observation, "trial_id" | "task_id">> {
     const j = this.#judgments.get(task.id);
@@ -419,6 +407,28 @@ export class HumanEvaluator implements Evaluator {
 }
 
 type Judgment = { score: number | null; passed: boolean | null; label: string | null };
+
+function computeAgreement(
+  primary: Map<string, Judgment>,
+  secondaryPath: string,
+): { cohen_kappa: number | null; n: number; interpretation: string | null } {
+  const secondary = new Map<string, Judgment>();
+  loadJudgments(secondaryPath, secondary);
+  const ids = [...primary.keys()].filter((id) => secondary.has(id));
+  const a: unknown[] = [];
+  const b: unknown[] = [];
+  for (const id of ids) {
+    const j1 = primary.get(id);
+    const j2 = secondary.get(id);
+    const l1 = j1?.label ?? (j1?.passed === true ? true : j1?.passed === false ? false : j1?.score ?? null);
+    const l2 = j2?.label ?? (j2?.passed === true ? true : j2?.passed === false ? false : j2?.score ?? null);
+    if (l1 === null || l1 === undefined || l2 === null || l2 === undefined) continue;
+    a.push(l1);
+    b.push(l2);
+  }
+  const r = cohenKappa(a, b);
+  return { cohen_kappa: r.kappa, n: r.n, interpretation: r.interpretation };
+}
 
 function loadJudgments(path: string, into: Map<string, Judgment>): void {
   const text = readFileSync(path, "utf8");

@@ -230,8 +230,8 @@ async function runArm(
         trial, observation, artifact_digest: null,
         provenance: {
           subject: subject.describe(), evaluator: evaluator.describe(),
-          exit_code: out.exit_code, duration_ms, timed_out: out.timed_out,
-          error: out.error,
+          exit_code: convo.exit_code, duration_ms, timed_out: convo.timed_out,
+          error: convo.error,
         },
         confidence: null,
       };
@@ -266,8 +266,7 @@ async function runArm(
   };
 }
 
-</** Legacy alias (kept for external callers): size-bounded output. */
-export function redactUnknown(v: unknown): unknown {
+/** Legacy alias (kept for external callers): size-bounded output. */export function redactUnknown(v: unknown): unknown {
   return truncateOutput(v);
 }
 
@@ -292,6 +291,33 @@ const MAX_OUTPUT_CHARS = 20000;
  * full content stays addressable by digest.
  */
 export function truncateOutput(v: unknown): unknown {
+  if (typeof v === "string") {
+    const redacted = redact(v);
+    if (redacted.length <= MAX_OUTPUT_CHARS) return redacted;
+    return {
+      truncated: true,
+      excerpt: redacted.slice(0, MAX_OUTPUT_CHARS),
+      byte_count: redacted.length,
+      digest: `sha256:${createHash("sha256").update(redacted).digest("hex")}`,
+    };
+  }
+  // Deep-redact structured output before measuring so the stored copy never
+  // carries secrets that string-level redaction would miss on nesting.
+  const cleaned = redactDeep(v);
+  try {
+    const s = JSON.stringify(cleaned);
+    if (!s || s.length <= MAX_OUTPUT_CHARS) return cleaned;
+    return {
+      truncated: true,
+      excerpt: s.slice(0, MAX_OUTPUT_CHARS),
+      byte_count: s.length,
+      digest: `sha256:${createHash("sha256").update(s).digest("hex")}`,
+    };
+  } catch {
+    return String(v).slice(0, MAX_OUTPUT_CHARS);
+  }
+}
+
 /**
  * Single-shot or multi-turn subject execution.
  *

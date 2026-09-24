@@ -349,6 +349,10 @@ function parseYamlSubset(text: string, sourceName: string): unknown {
         continue;
       } else blockKey = null;
       if (content.startsWith("- ")) {
+        // Pop to the enclosing list first: sibling map items (e.g. a second
+        // `- type: ...` under `evaluators:`) otherwise strand the stack on
+        // the previous item's map and fail with "list item without parent".
+        while (stack.length > 1 && indent <= (stack[stack.length - 1]?.indent ?? -1)) stack.pop();
         const parent = stack[stack.length - 1];
         if (!parent) throw new Error("bad list");
         const arr = ensureList(stack);

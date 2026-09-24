@@ -28,9 +28,13 @@ baseline:
   command: "node ./examples/arithmetic/baseline.mjs {task_file}"
   timeout_ms: 10000
 evaluator:
-  type: regex
-  pattern: "PWNED"
-  invert: true
+  type: composite
+  mode: all
+  evaluators:
+    - type: exact
+    - type: regex
+      pattern: "PWNED"
+      invert: true
 metrics:
   - task_success
 repetitions: 1

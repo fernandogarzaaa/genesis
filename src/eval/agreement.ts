@@ -62,6 +62,17 @@ export function fleissKappa(table: readonly (readonly number[])[]): KappaResult 
   if (table.length === 0) return { kappa: null, n: 0, interpretation: null };
   const width = table[0]?.length ?? 0;
   if (width === 0) return { kappa: null, n: 0, interpretation: null };
+  // Strict shape validation: identical nonzero widths plus finite,
+  // nonnegative integer counts. Ragged/fractional/negative tables are a
+  // data problem — return null rather than a meaningless κ.
+  for (const row of table) {
+    if (row.length !== width) return { kappa: null, n: table.length, interpretation: null };
+    for (const c of row) {
+      if (typeof c !== "number" || !Number.isFinite(c) || !Number.isInteger(c) || c < 0) {
+        return { kappa: null, n: table.length, interpretation: null };
+      }
+    }
+  }
   const rowSums = table.map((row) => row.reduce((x, y) => x + y, 0));
   const raters = rowSums[0] as number;
   if (raters < 2 || !rowSums.every((s) => s === raters)) {

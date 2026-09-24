@@ -109,7 +109,7 @@ ${result.comparisons.length > 0 ? `<div class="card"><h2>Comparisons (paired, de
 ${result.findings.length > 0 ? `<div class="card"><h2>Findings (${result.findings.length})</h2>${result.findings.map((f) => `<p><span class="chip sev-${escapeHtml(f.severity)}">${escapeHtml(f.severity)}</span> <strong>${escapeHtml(f.category)}</strong> — ${escapeHtml(f.summary)}${f.possible_cause ? `<br><span class="mono">possible cause: ${escapeHtml(f.possible_cause)}</span>` : ""}</p>`).join("")}</div>` : ""}
 ${v.hypothesis_results?.length ? `<div class="card"><h2>Hypotheses</h2><table>${v.hypothesis_results.map((h) => `<tr><td>${h.satisfied === true ? "✓" : h.satisfied === false ? "✗" : "?"}</td><td class="mono">${escapeHtml(h.metric)} ${escapeHtml(h.operator)} ${h.threshold}</td><td>observed ${h.observed === null ? "n/a" : fmt(h.observed)}</td></tr>`).join("")}</table></div>` : ""}
 <div class="card"><h2>Trials (${rows.length})</h2>
-<input id="q" type="search" placeholder="filter by task, trial, or output…" oninput="filter Trials(this.value)">
+<input id="q" type="search" placeholder="filter by task, trial, or output…" oninput="filterTrials(this.value)">
 <div id="trials">${rows.map(renderTrial).join("")}</div></div>
 <script>
 function filterTrials(q){q=q.toLowerCase();for(const d of document.querySelectorAll("details.trial")){d.style.display=d.textContent.toLowerCase().includes(q)?"":"none"}}
@@ -157,6 +157,12 @@ function fmt(v: number): string {
 /**
  * Regenerate the report from a bundle directory (verdict + metrics +
  * findings + statistics + results.jsonl). Used by `genesis report --html`.
+ *
+ * Arms are reconstructed from statistics.json plus the bundle's documented
+ * directory layout: `treatment/`, `baseline/`, and `ablations/<sanitized>/`
+ * (ablation + sanity arms). Every results.jsonl row is read — no silent
+ * truncation: the rendered trial count always matches the authoritative
+ * bundle, with the total shown in the Trials heading.
  */
 export function renderHtmlFromBundle(dir: string): string {
   const read = (rel: string): unknown => JSON.parse(readFileSync(join(dir, rel), "utf8"));
@@ -170,18 +176,22 @@ export function renderHtmlFromBundle(dir: string): string {
     }[];
     comparisons: ExperimentResult["comparisons"];
   };
-  const arms: ExperimentResult["arms"] = [];
-  for (const armDir of ["treatment", "baseline"]) {
+  // Map arm name -> bundle directory (mirrors writeEvidenceBundle layout).
+  const armDirFor = (arm: string): string => {
+    if (arm === "treatment") return "treatment";
+    if (arm === "baseline") return "baseline";
+    return join("ablations", arm.replace(/^(ablation|sanity):/, "").replace(/[^A-Za-z0-9._-]+/g, "_"));
+  };
+  const readArm = (arm: string, armDir: string): ExperimentResult["arms"][number] | null => {
     const metricsPath = join(dir, armDir, "metrics.json");
     const resultsPath = join(dir, armDir, "results.jsonl");
-    if (!existsSync(metricsPath) || !existsSync(resultsPath)) continue;
+    if (!existsSync(metricsPath) || !existsSync(resultsPath)) return null;
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8")) as ExperimentResult["arms"][number]["metrics"];
     const trials: ExperimentResult["arms"][number]["trials"] = [];
     const observations: ExperimentResult["arms"][number]["observations"] = [];
     for (const line of readFileSync(resultsPath, "utf8").split("\n")) {
       const t = line.trim();
       if (!t) continue;
-      if (trials.length >= 500) break;
       try {
         const row = JSON.parse(t) as { trial: (typeof trials)[number]; observation: (typeof observations)[number] };
         trials.push(row.trial);
@@ -190,22 +200,36 @@ export function renderHtmlFromBundle(dir: string): string {
         // Skip corrupt lines; the JSONL remains authoritative.
       }
     }
-    const stats = statistics.arms.find((a) => a.arm === armDir)?.statistics ?? [];
-    const agreement = statistics.arms.find((a) => a.arm === armDir)?.evaluator_agreement;
-    arms.push({
-      arm: armDir, trials, observations, evidence: [], metrics, statistics: stats,
+    const stats = statistics.arms.find((a) => a.arm === arm)?.statistics ?? [];
+    const agreement = statistics.arms.find((a) => a.arm === arm)?.evaluator_agreement;
+    return {
+      arm, trials, observations, evidence: [], metrics, statistics: stats,
       ...(agreement ? { evaluator_agreement: agreement } : {}),
-    });
+    };
+  };
+  const arms: ExperimentResult["arms"] = [];
+  for (const a of statistics.arms) {
+    const arm = readArm(a.arm, armDirFor(a.arm));
+    if (arm) arms.push(arm);
   }
+  // Backfill any arm directory not listed in statistics.json (forward-compat).
+  const seen = new Set(arms.map((a) => armDirFor(a.arm)));
+  const candidates: { arm: string; dir: string }[] = [];
   for (const entry of readdirSync(dir)) {
-    if (entry !== "treatment" && entry !== "baseline" && existsSync(join(dir, entry, "metrics.json"))) {
-      try {
-        const metrics = JSON.parse(readFileSync(join(dir, entry, "metrics.json"), "utf8")) as ExperimentResult["arms"][number]["metrics"];
-        arms.push({ arm: entry, trials: [], observations: [], evidence: [], metrics, statistics: [] });
-      } catch {
-        // Skip unreadable arms.
-      }
+    if (entry === "treatment" || entry === "baseline") continue;
+    if (entry !== "ablations" && existsSync(join(dir, entry, "metrics.json"))) {
+      candidates.push({ arm: entry, dir: entry });
     }
+  }
+  if (existsSync(join(dir, "ablations"))) {
+    for (const entry of readdirSync(join(dir, "ablations"))) {
+      candidates.push({ arm: entry, dir: join("ablations", entry) });
+    }
+  }
+  for (const c of candidates) {
+    if (seen.has(c.dir)) continue;
+    const arm = readArm(c.arm, c.dir);
+    if (arm) arms.push(arm);
   }
   return renderHtmlReport({
     name: `${verdict.scope.dataset} report`,
