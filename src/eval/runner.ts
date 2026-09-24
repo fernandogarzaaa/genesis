@@ -221,11 +221,17 @@ async function runArm(
       // Evidence digest binds the FULL record (trial + observation +
       // provenance + timestamps), excluding only its own digest field.
       // The old {trial_id, task_id, observation} digest is kept as
-      // legacy_digest for verification of historic bundles.
+      // legacy_digest for verification of historic bundles — computed first
+      // so the v2 digest binds it too. A verifier reproduces `digest` by
+      // hashing the stored record minus `digest` alone.
+      const legacyDigest = createHash("sha256")
+        .update(canonicalize({ trial_id, task_id: task.id, observation } as unknown as Record<string, unknown>))
+        .digest("hex");
       const evidenceBody = {
         source: `subject:${subjectName}|evaluator:${evaluator.name}`,
         timestamp: t1, task_id: task.id, trial_id,
         trial, observation, artifact_digest: null,
+        legacy_digest: legacyDigest,
         provenance: {
           subject: subject.describe(), evaluator: evaluator.describe(),
           exit_code: out.exit_code, duration_ms, timed_out: out.timed_out,
@@ -237,9 +243,6 @@ async function runArm(
         stripUndefined(evidenceBody) as unknown as Record<string, unknown>,
         ["digest"],
       );
-      const legacyDigest = createHash("sha256")
-        .update(canonicalize({ trial_id, task_id: task.id, observation } as unknown as Record<string, unknown>))
-        .digest("hex");
       evidence.push({
         digest, source: `subject:${subjectName}|evaluator:${evaluator.name}`,
         timestamp: t1, task_id: task.id, trial_id,
