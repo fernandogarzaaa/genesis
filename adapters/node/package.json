@@ -1,6 +1,6 @@
 {
   "name": "genesis-adapter",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Zero-dependency helpers implementing the Genesis adapter protocol (subjects and external evaluators).",
   "license": "MIT",
   "type": "module",

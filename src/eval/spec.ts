@@ -33,6 +33,8 @@ export interface EvalSpec {
   readonly evaluator: EvaluatorSpec;
   readonly metrics?: readonly string[];
   readonly repetitions?: number;
+  /** Cap on multi-turn loop iterations (default: task turn count). */
+  readonly max_turns?: number;
   readonly seeds?: readonly (number | string)[];
   readonly paired?: boolean;
   readonly timeout_ms?: number;
@@ -85,6 +87,10 @@ export interface EvaluatorSpec {
   readonly judgments?: string;
   readonly evaluators?: readonly EvaluatorSpec[];
   readonly mode?: "all" | "any";
+  /** human: optional second judgments file for inter-rater agreement (κ). */
+  readonly judgments_secondary?: string;
+  /** regex: pass when the pattern is ABSENT (injection-marker resistance). */
+  readonly invert?: boolean;
   /** classification: the positive class (string/boolean/number). Required for binary precision/recall. */
   readonly positive?: unknown;
   /** classification: output object field holding a numeric score in [0,1] (for ROC-AUC, PR-AUC, calibration). */
@@ -200,6 +206,11 @@ export function validateSpec(raw: unknown, sourceName = "<inline>"): EvalSpec {
     throw new SpecError(`${sourceName}: sanity_threshold must be a finite number`);
   }
 
+  const maxTurns = s.max_turns;
+  if (maxTurns !== undefined && (!Number.isInteger(maxTurns) || (maxTurns as number) < 1)) {
+    throw new SpecError(`${sourceName}: max_turns must be an integer >= 1`);
+  }
+
   return {
     name,
     ...(claim ? { claim } : {}),
@@ -219,6 +230,7 @@ export function validateSpec(raw: unknown, sourceName = "<inline>"): EvalSpec {
     evaluator: evaluator as unknown as EvaluatorSpec,
     ...(Array.isArray(s.metrics) ? { metrics: s.metrics as string[] } : {}),
     ...(repetitions !== undefined ? { repetitions: repetitions as number } : {}),
+    ...(maxTurns !== undefined ? { max_turns: maxTurns as number } : {}),
     ...(Array.isArray(s.seeds) ? { seeds: s.seeds as (number | string)[] } : {}),
     ...(typeof s.paired === "boolean" ? { paired: s.paired as boolean } : {}),
     ...(typeof s.timeout_ms === "number" ? { timeout_ms: s.timeout_ms as number } : {}),

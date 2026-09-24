@@ -89,7 +89,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         return await cmdEvaluate(argv.slice(1));
 
       case "report":
-        return cmdReport(argv.slice(1));
+        return await cmdReport(argv.slice(1));
 
       case "compare":
         return await cmdCompare(argv.slice(1));
@@ -358,11 +358,20 @@ async function cmdEvaluate(argv: readonly string[]): Promise<number> {
   }
 }
 
-function cmdReport(argv: readonly string[]): number {
-  const [dir] = argv;
+async function cmdReport(argv: readonly string[]): Promise<number> {
+  const [dir, ...rest] = argv;
   if (!dir) {
-    fail("usage: genesis report <results-dir>");
+    fail("usage: genesis report <results-dir> [--html <out.html>]");
     return AUDIT_EXIT.INTERNAL_ERROR;
+  }
+  const htmlIndex = rest.indexOf("--html");
+  if (htmlIndex >= 0) {
+    const out = rest[htmlIndex + 1];
+    if (!out) {
+      fail("usage: genesis report <results-dir> --html <out.html>");
+      return AUDIT_EXIT.INTERNAL_ERROR;
+    }
+    return cmdReportHtml(dir, out);
   }
   try {
     const verdict = JSON.parse(readFileSync(join(dir, "verdict.json"), "utf8")) as {
@@ -696,6 +705,19 @@ async function cmdRunBenchmark(argv: readonly string[]): Promise<number> {
     return result.verdict.verdict === "SUPPORTED" ? 0 : result.verdict.verdict === "FALSIFIED" ? 1 : 2;
   } catch (error) {
     fail((error as Error).message);
+    return AUDIT_EXIT.INTERNAL_ERROR;
+  }
+}
+
+async function cmdReportHtml(dir: string, out: string): Promise<number> {
+  try {
+    const { renderHtmlFromBundle } = await import("../eval/report-html.js");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(out, renderHtmlFromBundle(dir), "utf8");
+    process.stdout.write(`HTML report: ${out}\n`);
+    return 0;
+  } catch (error) {
+    fail(`cannot render HTML from ${dir}: ${(error as Error).message}`);
     return AUDIT_EXIT.INTERNAL_ERROR;
   }
 }

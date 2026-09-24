@@ -12,12 +12,14 @@
  * ├── statistics.json    — per-arm stats + paired comparisons
  * ├── findings.json
  * ├── evidence/          — evidence.jsonl (every record, digested)
- * └── verdict.json       — verdict with claim boundaries
+ * ├── verdict.json       — verdict with claim boundaries
+ * └── report.html        — offline single-file report rendered from the bundle
  */
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { renderHtmlReport } from "./report-html.js";
 import { canonicalize, hashCanonicalExcluding } from "../shared/canonical.js";
 import { redact, redactDeep } from "../shared/redact.js";
 import { computeEnvDigest } from "../evidence/runner.js";
@@ -95,13 +97,24 @@ export function writeEvidenceBundle(
     write(join(armDir, "metrics.json"), arm.metrics);
   }
   write("statistics.json", {
-    arms: result.arms.map((a) => ({ arm: a.arm, statistics: a.statistics })),
+    arms: result.arms.map((a) => ({
+      arm: a.arm,
+      statistics: a.statistics,
+      ...(a.evaluator_agreement ? { evaluator_agreement: a.evaluator_agreement } : {}),
+    })),
     comparisons: result.comparisons,
   });
   write("findings.json", result.findings);
   const evidenceLines = result.arms.flatMap((a) => a.evidence).map((e) => JSON.stringify(redactDeep(e)));
   writeFileSync(join(dir, "evidence", "evidence.jsonl"), `${evidenceLines.join("\n")}\n`, "utf8");
   write("verdict.json", result.verdict);
+  try {
+    // Render from a deep-redacted copy: in-memory trial output may carry
+    // secrets that JSON artifacts redact but raw HTML would expose.
+    writeFileSync(join(dir, "report.html"), renderHtmlReport(redactDeep(result)), "utf8");
+  } catch {
+    // HTML is a lens, never load-bearing: a render failure must not fail the run.
+  }
   if (spec.analysis && spec.analysis.length > 0) {
     // Analysis attachments are NOT copied verbatim anymore: textual files are
     // scanned/redacted, binaries require explicit opt-in. Verbatim copy was a

@@ -20,7 +20,7 @@ import { trialDetailValues, trialRetrievalValues } from "./metrics.js";
 import { describe, describeRate, pairedCompare } from "./stats.js";
 import { decideVerdict } from "./verdict.js";
 import type {
-  EvalFinding, EvidenceRecord, MetricValue, Observation, PairedComparison,
+  EvalFinding, EvalTask, EvidenceRecord, MetricValue, Observation, PairedComparison,
   StatisticalResult, Trial, VerdictRecord,
 } from "./types.js";
 import type { EvalSpec } from "./spec.js";
@@ -34,6 +34,12 @@ export interface ArmResult {
   readonly evidence: EvidenceRecord[];
   readonly metrics: MetricValue[];
   readonly statistics: (StatisticalResult | null)[];
+  /** Inter-rater agreement when the evaluator reports it (human + second rater). */
+  readonly evaluator_agreement?: {
+    readonly cohen_kappa: number | null;
+    readonly n: number;
+    readonly interpretation: string | null;
+  } | null;
 }
 
 export interface ExperimentResult {
@@ -158,6 +164,7 @@ async function runArm(
   subjectOverride?: EvalSpec["subject"],
 ): Promise<ArmResult> {
   const subject: SubjectAdapter = createSubject(subjectOverride ?? subjectSpecFor(spec), runner);
+  const maxTurns = spec.max_turns ?? null;
   const trials: Trial[] = [];
   const observations: Observation[] = [];
   const evidence: EvidenceRecord[] = [];
@@ -169,46 +176,41 @@ async function runArm(
       const trial_id = `${armId}/trial-${String(n).padStart(5, "0")}`;
       const t0 = new Date().toISOString();
       const s0 = Date.now();
-      let out: SubjectResult | null = null;
-      try {
-        out = await subject.run(task, rep, seed);
-      } catch (error) {
-        out = {
-          output: null, raw_stdout: "", raw_stderr: "",
-          exit_code: null, duration_ms: Date.now() - s0,
-          timed_out: false, error: (error as Error).message,
-        };
-      }
+      const convo = await runConversation(subject, task, rep, seed, maxTurns);
       const duration_ms = Date.now() - s0;
       const t1 = new Date().toISOString();
-      const failed = isFailedExecution(out);
+      // Fail-closed (extends single-shot rule to conversations): a later turn
+      // that errors/times out withholds the stale earlier answer — scoring it
+      // would mark an incomplete interaction successful.
+      const failed = isFailedExecution({ error: convo.error, timed_out: convo.timed_out, exit_code: convo.exit_code });
       const trial: Trial = {
         trial_id, task_id: task.id, repetition: rep + 1, seed,
         subject: subjectName, started_at: t0, ended_at: t1,
-        duration_ms, timed_out: out.timed_out, error: out.error,
-        output: truncateOutput(out.output),
+        duration_ms, timed_out: convo.timed_out, error: convo.error,
+        output: truncateOutput(failed ? null : convo.final),
+        ...(convo.transcript ? { transcript: redactDeep(convo.transcript) } : {}),
       };
       trials.push(trial);
       let obs: Omit<Observation, "trial_id" | "task_id">;
       if (failed) {
-        // Fail-closed: crashed / timed-out / nonzero-exit trials are UNJUDGED.
-        // Never send partial/stale output to the evaluator — it could still
-        // "pass" on a fragment and produce SUPPORTED from a failed execution.
+        // Never invoke the evaluator on failed execution (single-shot or
+        // multi-turn): partial/stale output could still "pass" and produce
+        // SUPPORTED from a failed run.
         obs = {
           evaluator: evaluator.name, evaluator_kind: "deterministic",
           score: null, passed: null,
           details: {
             unjudged: true,
-            reason: out.timed_out
+            reason: convo.timed_out
               ? "subject timed out"
-              : out.error ?? `subject failed (exit ${out.exit_code})`,
-            exit_code: out.exit_code,
-            timed_out: out.timed_out,
+              : convo.error ?? `subject failed (exit ${convo.exit_code})`,
+            exit_code: convo.exit_code,
+            timed_out: convo.timed_out,
           },
         };
       } else {
         try {
-          obs = await evaluator.evaluate(task, out.output);
+          obs = await evaluator.evaluate(task, convo.final);
         } catch (error) {
           obs = {
             evaluator: evaluator.name, evaluator_kind: "deterministic",
@@ -224,6 +226,15 @@ async function runArm(
       // legacy_digest for verification of historic bundles — computed first
       // so the v2 digest binds it too. A verifier reproduces `digest` by
       // hashing the stored record minus `digest` alone.
+      // Provenance is built once and reused: the digested body and the
+      // stored record must carry identical provenance (incl. `turns`),
+      // or verifiers cannot reproduce the digest.
+      const provenance: Record<string, unknown> = {
+        subject: subject.describe(), evaluator: evaluator.describe(),
+        exit_code: convo.exit_code, duration_ms, timed_out: convo.timed_out,
+        error: convo.error,
+        ...(convo.turns !== null ? { turns: convo.turns } : {}),
+      };
       const legacyDigest = createHash("sha256")
         .update(canonicalize({ trial_id, task_id: task.id, observation } as unknown as Record<string, unknown>))
         .digest("hex");
@@ -231,13 +242,9 @@ async function runArm(
         source: `subject:${subjectName}|evaluator:${evaluator.name}`,
         timestamp: t1, task_id: task.id, trial_id,
         trial, observation, artifact_digest: null,
-        legacy_digest: legacyDigest,
-        provenance: {
-          subject: subject.describe(), evaluator: evaluator.describe(),
-          exit_code: out.exit_code, duration_ms, timed_out: out.timed_out,
-          error: out.error,
-        },
-        confidence: null,
+          legacy_digest: legacyDigest,
+        provenance,
+          confidence: null,
       };
       const digest = hashCanonicalExcluding(
         stripUndefined(evidenceBody) as unknown as Record<string, unknown>,
@@ -248,16 +255,18 @@ async function runArm(
         timestamp: t1, task_id: task.id, trial_id,
         trial, observation, artifact_digest: null,
         legacy_digest: legacyDigest,
-        provenance: {
-          subject: subject.describe(), evaluator: evaluator.describe(),
-          exit_code: out.exit_code, duration_ms, timed_out: out.timed_out,
-          error: out.error,
-        },
+        provenance,
         confidence: null,
       });
     }
   }
-  return { arm: armId, trials, observations, evidence, metrics: [], statistics: [] };
+  const agreement = typeof (evaluator as { agreement?: unknown }).agreement === "function"
+    ? ((evaluator as unknown as { agreement(): ArmResult["evaluator_agreement"] }).agreement() ?? null)
+    : null;
+  return {
+    arm: armId, trials, observations, evidence, metrics: [], statistics: [],
+    ...(agreement ? { evaluator_agreement: agreement } : {}),
+  };
 }
 
 /** Legacy alias (kept for external callers): size-bounded output. */
@@ -314,6 +323,103 @@ export function truncateOutput(v: unknown): unknown {
 }
 
 /**
+ * Single-shot or multi-turn subject execution.
+ *
+ * Without task turns: one invocation, transcript null. With turns: one
+ * invocation per turn prompt, each receiving {task, history, turn} where
+ * history accumulates {role, content} pairs. A turn output shaped
+ * {message, done} advances with `message` and stops early on done=true;
+ * anything else is the message verbatim. The evaluator always judges the
+ * final message; the transcript is preserved evidence.
+ */
+async function runConversation(
+  subject: SubjectAdapter,
+  task: EvalTask,
+  repetition: number,
+  seed: number | string | null,
+  maxTurns: number | null,
+): Promise<{
+  final: unknown;
+  transcript: { role: string; content: string }[] | null;
+  turns: number | null;
+  timed_out: boolean;
+  error: string | null;
+  exit_code: number | null;
+}> {
+  if (!task.turns || task.turns.length === 0) {
+    try {
+      const out = await subject.run(task, repetition, seed);
+      return {
+        final: out.output, transcript: null, turns: null,
+        timed_out: out.timed_out, error: out.error, exit_code: out.exit_code,
+      };
+    } catch (error) {
+      return {
+        final: null, transcript: null, turns: null,
+        timed_out: false, error: (error as Error).message, exit_code: null,
+      };
+    }
+  }
+  const limit = Math.min(task.turns.length, maxTurns ?? task.turns.length);
+  const transcript: { role: string; content: string }[] = [];
+  let final: unknown = null;
+  let timedOut = false;
+  let error: string | null = null;
+  let exitCode: number | null = null;
+  let turns = 0;
+  for (let i = 0; i < limit; i++) {
+    const prompt = task.turns[i];
+    const promptText = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
+    transcript.push({ role: "user", content: promptText });
+    const turnTask: EvalTask = {
+      ...task,
+      id: `${task.id}#turn${i + 1}`,
+      input: prompt,
+      context: { ...(task.context as Record<string, unknown> ?? {}), history: [...transcript], turn: i + 1 },
+    };
+    let out: SubjectResult;
+    try {
+      out = await subject.run(turnTask, repetition, seed);
+    } catch (err) {
+      // Withhold stale earlier answers: a failed conversation has no final.
+      error = (err as Error).message;
+      final = null;
+      break;
+    }
+    if (out.timed_out) {
+      timedOut = true;
+      error = out.error;
+      exitCode = out.exit_code;
+      final = null;
+      break;
+    }
+    if (out.error) {
+      error = out.error;
+      exitCode = out.exit_code;
+      final = null;
+      break;
+    }
+    exitCode = out.exit_code;
+    const { message, done } = turnMessage(out.output);
+    transcript.push({ role: "assistant", content: message });
+    final = message;
+    turns = i + 1;
+    if (done) break;
+  }
+  return { final, transcript, turns, timed_out: timedOut, error, exit_code: exitCode };
+}
+
+function turnMessage(output: unknown): { message: string; done: boolean } {
+  if (output && typeof output === "object" && !Array.isArray(output)) {
+    const o = output as Record<string, unknown>;
+    if (typeof o.message === "string") {
+      return { message: o.message, done: o.done === true };
+    }
+  }
+  return { message: typeof output === "string" ? output : JSON.stringify(output) ?? String(output), done: false };
+}
+
+/**
  * Recursively drop `undefined` (canonical JSON rejects it — stringify would
  * silently drop those fields and produce colliding digests). Keeps nulls.
  */
@@ -335,7 +441,7 @@ function perTaskMeans(arm: ArmResult, metric: string): Map<string, number> {
   // Aggregate-only metrics (precision/recall/F1/ROC/PR-AUC/ECE) are not
   // decomposable per trial → empty map → no paired comparison row.
   const perTrial: { task_id: string; value: number }[] = [];
-  if (metric.includes("latency") || metric.includes("cost") || metric.includes("token") || metric === "mean_steps") {
+  if (metric.includes("latency") || metric.includes("cost") || metric.includes("token") || metric === "mean_steps" || metric === "mean_turns") {
     for (const t of arm.trials) {
       const v = trialMetricValue(t, metric);
       if (v !== null) perTrial.push({ task_id: t.task_id, value: v });
@@ -400,6 +506,8 @@ function trialMetricValue(t: Trial, metric: string): number | null {  switch (me
       return t.cost?.estimated_usd ?? null;
     case "total_tokens":
       return t.cost?.total_tokens ?? null;
+    case "mean_turns":
+      return t.transcript ? t.transcript.filter((m) => m.role === "assistant").length : null;
     default:
       return null;
   }
@@ -443,7 +551,7 @@ function statisticFor(metric: string, arm: ArmResult): StatisticalResult | null 
   ) {
     return null;
   }
-  const values = metric.includes("latency") || metric.includes("cost") || metric.includes("token") || metric === "mean_steps"
+  const values = metric.includes("latency") || metric.includes("cost") || metric.includes("token") || metric === "mean_steps" || metric === "mean_turns"
     ? perTrialValues(arm, metric)
     : arm.observations.map((o) => o.score).filter((s): s is number => typeof s === "number");
   return describe(values, metric);

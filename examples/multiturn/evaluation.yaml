@@ -1,0 +1,35 @@
+name: multiturn-triage
+claim:
+  id: claim-mt-001
+  statement: "The triage agent resolves three-turn customer conversations with the correct final disposition."
+  hypothesis:
+    primary:
+      metric: task_success
+      operator: ">="
+      threshold: 1.0
+  methodology:
+    paired: true
+    repetitions: 1
+    minimum_samples: 2
+  evaluation:
+    metrics:
+      - task_success
+      - mean_turns
+dataset:
+  path: ./examples/multiturn/cases.jsonl
+  format: jsonl
+  id: multiturn-triage-cases
+  version: "1"
+subject:
+  name: triage-agent
+  command: "node ./examples/multiturn/candidate.mjs {task_file}"
+  timeout_ms: 10000
+evaluator:
+  type: exact
+metrics:
+  - task_success
+  - mean_turns
+repetitions: 1
+paired: true
+thresholds:
+  task_success: ">=1.0"

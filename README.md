@@ -14,6 +14,11 @@ genesis audit --suite code --verifier "node harness.js {task_file} {completion_f
 # 3. Close the loop — evaluate the system AND assure the evaluator in one command:
 genesis trust examples/classification/evaluation.yaml --out ./trust
 genesis audit-evaluator examples/rag/evaluation.yaml --suite math
+
+# 4. Gate a release on a capability checkpoint, then open the evidence:
+genesis gate examples/agent-scope/evaluation.yaml --out ./release
+genesis report ./release/evaluation --html ./release/report.html
+# (every bundle already ships its own report.html — open it from file://)
 ```
 
 ## Zero-integration-cost adapters
@@ -179,6 +184,18 @@ analysis: [./interp-note.md]  # external cross-checks copied into the bundle
 
 See `examples/agent-scope/` (rogue-baseline detection) and
 `benchmarks/safety-v1/`.
+
+## Multi-turn conversations + rater agreement
+
+Tasks may carry `turns`: the runner invokes the subject once per turn with
+accumulated history (`{message, done}` envelope, `max_turns` cap), judges
+the final message, and preserves the transcript as evidence (`mean_turns`
+measures loop length). See `examples/multiturn/` and `adapters/PROTOCOL.md`.
+
+Human evaluators accept a second judgments file (`judgments_secondary`)
+and report Cohen's κ (`fleissKappa` available for N-rater tables) in the
+evaluator description, arm results, bundles, and reports — so agreement
+between raters is visible before anyone trusts their verdicts.
 
 ## Documents
 

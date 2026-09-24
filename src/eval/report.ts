@@ -41,6 +41,10 @@ export function renderReport(result: ExperimentResult): string {
       }
     }
     if (arm.metrics.length === 0) L.push("  (no metrics computed)");
+    if (arm.evaluator_agreement) {
+      const a = arm.evaluator_agreement;
+      L.push(`  inter-rater κ        ${a.cohen_kappa === null ? "n/a" : a.cohen_kappa.toFixed(4)} (n=${a.n}${a.interpretation ? `, ${a.interpretation}` : ""})`);
+    }
     L.push("");
   }
 
