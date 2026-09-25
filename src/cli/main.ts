@@ -18,9 +18,22 @@ import { ALL_DESCRIPTORS } from "../assurance/findings.js";
 import { VerifierAdapter, type AcceptRule, type Judge } from "../assurance/verifier.js";
 import type { EvalSpec } from "../eval/spec.js";
 import { SubprocessRunner } from "../evidence/runner.js";
-import { Ledger } from "../ledger/ledger.js";
 
 const VERSION = "0.3.0";
+
+/** Load the Ledger class, or throw a clear error if better-sqlite3 is unavailable. */
+async function loadLedger(): Promise<typeof import("../ledger/ledger.js").Ledger> {
+  try {
+    const { Ledger } = await import("../ledger/ledger.js");
+    return Ledger;
+  } catch {
+    throw new Error(
+      "The ledger requires the optional 'better-sqlite3' dependency, which is not installed. " +
+      "Install it with: npm install better-sqlite3 " +
+      "(if the build fails in a restricted container, try: npm install --ignore-scripts better-sqlite3)",
+    );
+  }
+}
 
 const USAGE = `genesis ${VERSION} — universal evaluation & assurance for AI-native software
 
@@ -209,7 +222,8 @@ async function cmdAudit(argv: readonly string[]): Promise<number> {
 
   // The ledger is optional here. An audit is useful as a one-shot check; it
   // becomes evidence only when someone needs to prove it happened.
-  const ledger = values.ledger ? new Ledger(values.ledger) : undefined;
+  const LedgerClass = values.ledger ? await loadLedger() : undefined;
+  const ledger = LedgerClass ? new LedgerClass(values.ledger) : undefined;
 
   try {
     const record = await runAudit({
@@ -327,8 +341,8 @@ async function cmdEvaluate(argv: readonly string[]): Promise<number> {
     // Ledger is optional; an evaluation is useful as a one-shot check and
     // becomes evidence when recorded.
     if (values.ledger) {
-      const { Ledger } = await import("../ledger/ledger.js");
-      const ledger = new Ledger(values.ledger);
+      const LedgerClass = await loadLedger();
+      const ledger = new LedgerClass(values.ledger);
       try {
         ledger.recordEvaluation(
           hashCanonical({ spec_digest: result.spec_digest, dataset_digest: result.dataset.digest }),
@@ -542,8 +556,8 @@ async function cmdAuditEvaluator(argv: readonly string[]): Promise<number> {
   try {
     const assurance = await assureEvaluator(spec, { ...(values.suite ? { suite: values.suite } : {}) });
     if (values.ledger) {
-      const { Ledger } = await import("../ledger/ledger.js");
-      const ledger = new Ledger(values.ledger);
+      const LedgerClass = await loadLedger();
+      const ledger = new LedgerClass(values.ledger);
       try {
         ledger.recordEvaluation(
           hashCanonical({ kind: "evaluator-assurance", spec_digest: specPath, dataset_digest: assurance.dataset_digest }),
@@ -598,8 +612,8 @@ async function cmdTrust(argv: readonly string[]): Promise<number> {
     const outDir = values.out ?? `${spec.name}-trust`;
     writeTrustBundle(outDir, spec, result, buildManifest(spec, result), assurance, trust);
     if (values.ledger) {
-      const { Ledger } = await import("../ledger/ledger.js");
-      const ledger = new Ledger(values.ledger);
+      const LedgerClass = await loadLedger();
+      const ledger = new LedgerClass(values.ledger);
       try {
         ledger.recordEvaluation(
           hashCanonical({ kind: "trust", spec_digest: result.spec_digest, dataset_digest: result.dataset.digest }),
@@ -671,7 +685,7 @@ async function cmdRunBenchmark(argv: readonly string[]): Promise<number> {
   const { buildManifest, writeEvidenceBundle } = await import("../eval/bundle.js");
   const { renderReport } = await import("../eval/report.js");
   const { hashCanonical } = await import("../shared/canonical.js");
-  const { Ledger } = values.ledger ? await import("../ledger/ledger.js") : { Ledger: null as never };
+  const LedgerClass = values.ledger ? await loadLedger() : null;
 
   try {
     const loaded = loadBenchmark(name, values.registry);
@@ -685,8 +699,8 @@ async function cmdRunBenchmark(argv: readonly string[]): Promise<number> {
     const result = await runExperiment(spec);
     const outDir = values.out ?? `${name}-results`;
     writeEvidenceBundle(outDir, spec, result, buildManifest(spec, result));
-    if (values.ledger && Ledger) {
-      const ledger = new Ledger(values.ledger);
+    if (values.ledger && LedgerClass) {
+      const ledger = new LedgerClass(values.ledger);
       try {
         ledger.recordBenchmark(
           hashCanonical({ benchmark: name, version: loaded.version, dataset_digest: result.dataset.digest }),
@@ -773,8 +787,8 @@ async function cmdGate(argv: readonly string[]): Promise<number> {
     const outDir = values.out ?? `${spec.name}-gate`;
     writeTrustBundle(outDir, spec, result, buildManifest(spec, result), assurance, trust, gate);
     if (values.ledger) {
-      const { Ledger } = await import("../ledger/ledger.js");
-      const ledger = new Ledger(values.ledger);
+      const LedgerClass = await loadLedger();
+      const ledger = new LedgerClass(values.ledger);
       try {
         ledger.recordEvaluation(
           hashCanonical({ kind: "gate", spec_digest: result.spec_digest, dataset_digest: result.dataset.digest }),
