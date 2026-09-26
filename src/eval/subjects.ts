@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { redact } from "../shared/redact.js";
+import { resolvePython } from "../shared/python.js";
 import { SubprocessRunner, type Runner } from "../evidence/runner.js";
 import { mulberry32 } from "./stats.js";
 import type { EvalTask } from "./types.js";
@@ -143,11 +144,18 @@ export class CommandSubject implements SubjectAdapter {
       const taskFile = join(dir, "task.json");
       writeFileSync(taskFile, JSON.stringify(task, null, 2), "utf8");
       const input = taskInputText(task);
-      const parts = splitCommand(this.#spec.command as string).map((p) =>
+      const template = this.#spec.command as string;
+      const parts = splitCommand(template).map((p) =>
         p.replaceAll("{task_file}", taskFile).replaceAll("{input}", input),
       );
-      const hasPlaceholder = (this.#spec.command as string).includes("{task_file}") || (this.#spec.command as string).includes("{input}");
-      const command = hasPlaceholder ? parts : [...parts, taskFile];
+      // {python} resolves to the available interpreter (python, else python3).
+      // Resolve lazily so specs that never mention it keep working on
+      // machines without any Python interpreter.
+      const commandParts = template.includes("{python}")
+        ? parts.map((p) => p.replaceAll("{python}", resolvePython()))
+        : parts;
+      const hasPlaceholder = template.includes("{task_file}") || template.includes("{input}");
+      const command = hasPlaceholder ? commandParts : [...commandParts, taskFile];
       const result = await this.#runner.run(command, {
         cwd: process.cwd(),
         timeoutMs: this.#spec.timeout_ms ?? 60_000,

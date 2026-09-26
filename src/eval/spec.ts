@@ -66,7 +66,7 @@ export interface EvalSpec {
 
 export interface SubjectSpec {
   readonly name?: string;
-  /** Command template with {input} and optionally {task_file}; reads task JSON on stdin-adjacent file. */
+  /** Command template with {input} and optionally {task_file}; {python} resolves to the available Python interpreter. Reads task JSON on stdin-adjacent file. */
   readonly command?: string;
   readonly http?: { readonly url: string; readonly method?: string; readonly headers?: Record<string, string> };
   /** Inline deterministic transform, e.g. "echo" | "upper" — for local reproducible examples. */
