@@ -64,7 +64,7 @@ describe("benchmark registry", () => {
     const resolved = resolveBenchmarkDataset(spec, join(process.cwd(), "benchmarks", "sentiment-v1"));
     const result = await runExperiment({
       ...resolved,
-      subject: { command: "python ./examples/python-classifier/subject.py {task_file}" },
+      subject: { command: "{python} ./examples/python-classifier/subject.py {task_file}" },
     });
     expect(result.verdict.verdict).toBe("SUPPORTED");
   }, 120_000);

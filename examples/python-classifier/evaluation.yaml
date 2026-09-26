@@ -24,7 +24,7 @@ dataset:
   version: "1"
 subject:
   name: python-keyword-classifier
-  command: "python ./examples/python-classifier/subject.py {task_file}"
+  command: "{python} ./examples/python-classifier/subject.py {task_file}"
   timeout_ms: 30000
 evaluator:
   type: classification

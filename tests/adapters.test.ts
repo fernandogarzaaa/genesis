@@ -14,17 +14,23 @@ import {
 } from "../adapters/node/index.js";
 import { runExperiment } from "../src/eval/runner.js";
 import { loadSpecFile } from "../src/eval/spec.js";
+import { resolvePython } from "../src/shared/python.js";
 
-function hasPython(): boolean {
+/** Resolved Python interpreter, or null when none is on PATH (python tests skip). */
+const PYTHON: string | null = (() => {
   try {
-    const r = spawnSync("python", ["--version"], { encoding: "utf8" });
-    return r.status === 0;
+    return resolvePython();
   } catch {
-    return false;
+    return null;
   }
+})();
+
+function pythonBin(): string {
+  if (PYTHON === null) throw new Error("Python interpreter is not available");
+  return PYTHON;
 }
 
-const itPython = hasPython() ? it : it.skip;
+const itPython = PYTHON === null ? it.skip : it;
 
 // ── Node adapter: pure envelope functions ──
 
@@ -98,7 +104,7 @@ describe("python adapter over subprocess", () => {
     try {
       const taskFile = join(dir, "task.json");
       writeFileSync(taskFile, JSON.stringify({ id: "t", input: "hello" }), "utf8");
-      const subjectOut = execFileSync("python", ["tests/fixtures/adapter_subject.py", taskFile], {
+      const subjectOut = execFileSync(pythonBin(), ["tests/fixtures/adapter_subject.py", taskFile], {
         encoding: "utf8",
         cwd: process.cwd(),
       });
@@ -107,7 +113,7 @@ describe("python adapter over subprocess", () => {
       const outFile = join(dir, "out.json");
       writeFileSync(outFile, subjectOut, "utf8");
       const judgeOut = execFileSync(
-        "python", ["tests/fixtures/adapter_evaluator.py", taskFile, outFile],
+        pythonBin(), ["tests/fixtures/adapter_evaluator.py", taskFile, outFile],
         { encoding: "utf8", cwd: process.cwd() },
       );
       expect(JSON.parse(judgeOut)).toEqual({ passed: true });
@@ -131,7 +137,7 @@ describe("python adapter over subprocess", () => {
         "run_evaluator(lambda t, o: 1/0)\n",
         "utf8",
       );
-      const r = spawnSync("python", [crash, taskFile, outFile], { encoding: "utf8", cwd: process.cwd() });
+      const r = spawnSync(pythonBin(), [crash, taskFile, outFile], { encoding: "utf8", cwd: process.cwd() });
       expect(r.status).not.toBe(0);
       const envelope = JSON.parse(r.stdout);
       expect(envelope).toHaveProperty("error");

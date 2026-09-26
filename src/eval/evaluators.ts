@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { redact } from "../shared/redact.js";
+import { resolvePython } from "../shared/python.js";
 import { SubprocessRunner, type Runner } from "../evidence/runner.js";
 import { splitCommand } from "./subjects.js";
 import { retrievalTrialStats } from "./metrics.js";
@@ -259,7 +260,12 @@ export class CommandEvaluator implements Evaluator {
       const parts = splitCommand(this.#command).map((p) =>
         p.replaceAll("{task_file}", taskFile).replaceAll("{output_file}", outputFile).replaceAll("{output}", outputFile),
       );
-      const result = await this.#runner.run(parts, { cwd: process.cwd(), timeoutMs: 60_000 });
+      // {python} resolves lazily so evaluator commands that never mention it
+      // keep working on machines without any Python interpreter.
+      const command = this.#command.includes("{python}")
+        ? parts.map((p) => p.replaceAll("{python}", resolvePython()))
+        : parts;
+      const result = await this.#runner.run(command, { cwd: process.cwd(), timeoutMs: 60_000 });
       if (result.spawn_error || result.timed_out) {
         return {
           evaluator: this.name, evaluator_kind: this.kind, score: null, passed: null,
@@ -335,7 +341,10 @@ export class LlmCommandEvaluator implements Evaluator {
       const parts = splitCommand(this.#command).map((p) =>
         p.replaceAll("{task_file}", taskFile).replaceAll("{output_file}", outputFile),
       );
-      const result = await this.#runner.run(parts, { cwd: process.cwd(), timeoutMs: 120_000 });
+      const command = this.#command.includes("{python}")
+        ? parts.map((p) => p.replaceAll("{python}", resolvePython()))
+        : parts;
+      const result = await this.#runner.run(command, { cwd: process.cwd(), timeoutMs: 120_000 });
       const promptDigest = createHash("sha256").update(JSON.stringify({ task, output, rubric: this.#rubric })).digest("hex");
       if (result.spawn_error || result.timed_out) {
         return {
