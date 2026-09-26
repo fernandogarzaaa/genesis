@@ -1,10 +1,21 @@
-import Database from "better-sqlite3";
+import { createRequire } from "node:module";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Ledger } from "../src/ledger/ledger.js";
+import { isLedgerAvailable, Ledger } from "../src/ledger/ledger.js";
 import { ZERO_HASH } from "../src/shared/canonical.js";
+
+const require = createRequire(import.meta.url);
+
+/**
+ * Raw driver access for chain-integrity checks. Only called inside tests
+ * gated on isLedgerAvailable(), so the require cannot throw here.
+ */
+function rawDb(path: string) {
+  const Driver = require("better-sqlite3");
+  return new Driver(path);
+}
 
 let dir: string;
 let path: string;
@@ -24,7 +35,7 @@ function fixedClock(start = 1_770_000_000_000): () => number {
   return () => (t += 1000);
 }
 
-describe("ledger chain", () => {
+describe.skipIf(!isLedgerAvailable())("ledger chain", () => {
   it("starts from the zero hash", () => {
     const ledger = new Ledger(path, fixedClock());
     const entry = ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
@@ -67,7 +78,7 @@ describe("ledger chain", () => {
     ledger.recordVerifierAudit("subject-2", { verdict: "SOUND" });
     ledger.close();
 
-    const db = new Database(path);
+    const db = rawDb(path);
     db.prepare("UPDATE ledger SET payload = ? WHERE seq = 2").run('{"tampered":true}');
     db.close();
 
@@ -86,7 +97,7 @@ describe("ledger chain", () => {
     ledger.recordVerifierAudit("subject-3", { verdict: "SOUND" });
     ledger.close();
 
-    const db = new Database(path);
+    const db = rawDb(path);
     db.prepare("DELETE FROM ledger WHERE seq = 2").run();
     db.close();
 
@@ -102,7 +113,7 @@ describe("ledger chain", () => {
     ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
     ledger.close();
 
-    const db = new Database(path);
+    const db = rawDb(path);
     db.prepare("UPDATE ledger SET recorded_at = 0 WHERE seq = 1").run();
     db.close();
 
@@ -112,7 +123,7 @@ describe("ledger chain", () => {
   });
 });
 
-describe("ledger reads", () => {
+describe.skipIf(!isLedgerAvailable())("ledger reads", () => {
   it("filters entries by type and subject hash", () => {
     const ledger = new Ledger(path, fixedClock());
     ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
@@ -141,7 +152,7 @@ describe("ledger reads", () => {
   });
 });
 
-describe("artifacts", () => {
+describe.skipIf(!isLedgerAvailable())("artifacts", () => {
   it("round-trips content by digest", () => {
     const ledger = new Ledger(path, fixedClock());
     const digest = ledger.putArtifact("hello world");
@@ -166,7 +177,7 @@ describe("artifacts", () => {
   });
 });
 
-describe("export", () => {
+describe.skipIf(!isLedgerAvailable())("export", () => {
   it("emits one JSON object per entry", () => {
     const ledger = new Ledger(path, fixedClock());
     ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });

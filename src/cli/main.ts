@@ -24,7 +24,10 @@ const VERSION = "0.3.0";
 /** Load the Ledger class, or throw a clear error if better-sqlite3 is unavailable. */
 async function loadLedger(): Promise<typeof import("../ledger/ledger.js").Ledger> {
   try {
-    const { Ledger } = await import("../ledger/ledger.js");
+    const { Ledger, isLedgerAvailable } = await import("../ledger/ledger.js");
+    if (!isLedgerAvailable()) {
+      throw new Error("better-sqlite3 is not installed or failed to load");
+    }
     return Ledger;
   } catch {
     throw new Error(
