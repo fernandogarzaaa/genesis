@@ -152,6 +152,20 @@ genesis suites    list probe suites and the defect classes they cover
 evidence only when someone needs to prove it happened — recorded in a
 hash-chained, append-only, tamper-evident ledger (`src/ledger/`).
 
+### Install notes: the optional better-sqlite3 dependency
+
+The ledger backend is the optional `better-sqlite3` dependency. It is a native
+module: if its build is skipped or fails during `npm install`, npm drops it
+silently (it is optional) and ledger-backed features are unavailable. The CLI
+then reports a clear error instead of a crash, and ledger-backed tests skip
+themselves. To get the ledger in a restricted container where the native build
+fails (for example `node-gyp` permission errors), install without build
+scripts and then rebuild just that binding:
+
+```bash
+npm install --ignore-scripts && npm rebuild better-sqlite3
+```
+
 The `behavioral` suite judges against [EVE](https://github.com/fernandogarzaaa/experience-validation-engine)
 (the Experience Validation Engine) rather than a `{task_file}`/`{completion_file}`
 verifier command.

@@ -5,7 +5,7 @@ import { suiteDigest, validateSuite, type ProbeSuite } from "../src/assurance/pr
 import { codeSuite, jsonSuite, mathSuite, suiteNames } from "../src/assurance/suites/index.js";
 import { DEFECT_CLASSES, TAXONOMY } from "../src/assurance/taxonomy.js";
 import { parseJsonLoose, VerifierAdapter } from "../src/assurance/verifier.js";
-import { Ledger } from "../src/ledger/ledger.js";
+import { Ledger, isLedgerAvailable } from "../src/ledger/ledger.js";
 import { SubprocessRunner } from "../src/evidence/runner.js";
 import { FakeRunner } from "./helpers.js";
 
@@ -235,7 +235,7 @@ describe("audit runner", () => {
 // nothing. These run the real fixture verifiers as subprocesses.
 
 describe("end to end: a defective verifier is caught", () => {
-  it("finds every planted defect in the code harness", async () => {
+  it.skipIf(!isLedgerAvailable())("finds every planted defect in the code harness", async () => {
     const ledger = new Ledger(":memory:");
     const record = await runAudit({ verifier: adapter(NAIVE, "naive"), suite: codeSuite, ledger });
 
@@ -281,7 +281,7 @@ describe("end to end: a sound verifier is not slandered", () => {
   }
 });
 
-describe("ledger integration", () => {
+describe.skipIf(!isLedgerAvailable())("ledger integration", () => {
   it("records the audit and keeps the chain intact", async () => {
     const ledger = new Ledger(":memory:");
     const record = await runAudit({ verifier: adapter(STRICT, "strict"), suite: mathSuite, ledger });

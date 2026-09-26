@@ -16,9 +16,45 @@
  * choke-point discipline `adam-governance` documents and v1 lacked.
  */
 
-import Database from "better-sqlite3";
+import { createRequire } from "node:module";
+import type Database from "better-sqlite3";
 import { canonicalize, hashCanonical, sha256, ZERO_HASH } from "../shared/canonical.js";
 import { redact } from "../shared/redact.js";
+
+/** Constructor type of the better-sqlite3 driver. */
+type DatabaseConstructor = new (
+  filename: string,
+  options?: Record<string, unknown>,
+) => Database.Database;
+
+const MISSING_DRIVER_ERROR =
+  "The ledger requires the optional 'better-sqlite3' dependency, which is not installed or failed to load. " +
+  "Install it with: npm install better-sqlite3. " +
+  "If the native build fails in a restricted container, install without build scripts " +
+  "and rebuild the binding afterwards: npm install --ignore-scripts && npm rebuild better-sqlite3";
+
+/**
+ * True when the optional better-sqlite3 dependency is installed and its
+ * native binding loads. Ledger-backed tests and CLI paths use this to
+ * degrade gracefully instead of failing at module load.
+ */
+export function isLedgerAvailable(): boolean {
+  try {
+    createRequire(import.meta.url)("better-sqlite3");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Load the better-sqlite3 driver, or throw an actionable error. */
+function loadDriver(): DatabaseConstructor {
+  try {
+    return createRequire(import.meta.url)("better-sqlite3") as DatabaseConstructor;
+  } catch {
+    throw new Error(MISSING_DRIVER_ERROR);
+  }
+}
 
 /** An assurance audit of a verifier, or a recorded evaluation/benchmark run. */
 export type EntryType = "VERIFIER_AUDITED" | "EVALUATION_RECORDED" | "BENCHMARK_RECORDED";
@@ -60,7 +96,7 @@ export class Ledger {
   readonly #now: () => number;
 
   constructor(path = ":memory:", now: () => number = Date.now) {
-    this.#db = new Database(path);
+    this.#db = new (loadDriver())(path);
     this.#db.pragma("journal_mode = WAL");
     this.#db.pragma("foreign_keys = ON");
     this.#db.exec(SCHEMA);

@@ -22,7 +22,7 @@ import {
 } from "../src/assurance/behavioral-taxonomy.js";
 import { validateSuite } from "../src/assurance/probe.js";
 import { behavioralSuite, suiteNames } from "../src/assurance/suites/index.js";
-import { Ledger } from "../src/ledger/ledger.js";
+import { Ledger, isLedgerAvailable } from "../src/ledger/ledger.js";
 import { SubprocessRunner } from "../src/evidence/runner.js";
 import { FakeRunner } from "./helpers.js";
 import type { RunOptions } from "../src/evidence/runner.js";
@@ -218,7 +218,7 @@ describe.skipIf(!eveAvailable)("behavioral audit — live against the real eve b
     expect(control?.outcome).toBe("correct");
   }, 120_000);
 
-  it("records the audit in the ledger with a retrievable transcript", async () => {
+  it.skipIf(!isLedgerAvailable())("records the audit in the ledger with a retrievable transcript", async () => {
     const ledger = new Ledger(":memory:");
     const adapter = new EveOracleAdapter(
       { bin: ["node", EVE_BIN_PATH], timeout_ms: 60_000, cwd: EVE_REPO },
