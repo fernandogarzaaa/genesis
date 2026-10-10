@@ -4,6 +4,7 @@
 
 ```bash
 npm install && npm run build
+npm link            # puts `genesis` on your PATH (or prefix every command with `npx`)
 
 # 1. Evaluate any system against a declarative spec (no SDK required):
 genesis evaluate examples/arithmetic/evaluation.yaml --out ./results
@@ -78,6 +79,10 @@ is an observation, never ground truth.
 npm install && npm run build
 
 genesis audit --suite code --verifier "node harness.js {task_file} {completion_file}"
+
+# Runnable as-is from a clone: a deliberately defective verifier and a hardened one
+npx genesis audit --suite code --verifier "node fixtures/verifiers/naive.mjs {task_file} {completion_file}"   # EXPLOITABLE, exit 1
+npx genesis audit --suite code --verifier "node fixtures/verifiers/strict.mjs {task_file} {completion_file}"  # SOUND, exit 0
 ```
 
 ```
@@ -148,6 +153,17 @@ genesis audit --suite <code|json|math|behavioral> [--ledger <db>] [--json] [--ve
 genesis suites    list probe suites and the defect classes they cover
 ```
 
+Verifier commands run in your current directory with a **scrubbed
+environment**: only `PATH`, `HOME`, `LANG`, `LC_ALL`, `TZ`, `TMPDIR`, `SHELL`
+and `TERM` are passed through (plus `CI=1`, `NO_COLOR=1`). This keeps audits
+reproducible and keeps secrets out of evidence, but it means
+`MODE=strict genesis audit --verifier "..."` does **not** reach the verifier —
+pass configuration as command-line arguments instead (e.g.
+`--verifier "python3 verify.py {task_file} {completion_file} --mode strict"`).
+If every probe comes back *unreadable*, run with `--verbose`: each probe note
+carries the verifier's exit code and the stderr line that names the failure
+(missing file, import error, wrong interpreter).
+
 `--ledger` is optional. An audit is useful as a one-shot check; it becomes
 evidence only when someone needs to prove it happened — recorded in a
 hash-chained, append-only, tamper-evident ledger (`src/ledger/`).
@@ -165,6 +181,11 @@ scripts and then rebuild just that binding:
 ```bash
 npm install --ignore-scripts && npm rebuild better-sqlite3
 ```
+
+`better-sqlite3@13` requires **Node 22+** (Genesis itself runs on Node 20+).
+On Node 20 the ledger is unavailable even when the install looks clean. Check
+with `node -e "require('better-sqlite3')"`; if it throws, the ledger is off and
+`--ledger` will report a clear error.
 
 The `behavioral` suite judges against [EVE](https://github.com/fernandogarzaaa/experience-validation-engine)
 (the Experience Validation Engine) rather than a `{task_file}`/`{completion_file}`
