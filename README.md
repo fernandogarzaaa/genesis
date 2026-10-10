@@ -83,6 +83,10 @@ genesis audit --suite code --verifier "node harness.js {task_file} {completion_f
 # Runnable as-is from a clone: a deliberately defective verifier and a hardened one
 npx genesis audit --suite code --verifier "node fixtures/verifiers/naive.mjs {task_file} {completion_file}"   # EXPLOITABLE, exit 1
 npx genesis audit --suite code --verifier "node fixtures/verifiers/strict.mjs {task_file} {completion_file}"  # SOUND, exit 0
+
+# Python/pytest gates (needs python3 with pytest installed)
+npx genesis audit --suite code-py --verifier "python3 fixtures/verifiers/naive_pytest.py {task_file} {completion_file}"   # EXPLOITABLE, exit 1
+npx genesis audit --suite code-py --verifier "python3 fixtures/verifiers/strict_pytest.py {task_file} {completion_file}"  # SOUND, exit 0
 ```
 
 ```
@@ -143,9 +147,9 @@ condition.
 ## Usage
 
 ```
-genesis audit --suite <code|json|math|behavioral> [--ledger <db>] [--json] [--verbose]
+genesis audit --suite <code|code-py|json|math|behavioral> [--ledger <db>] [--json] [--verbose]
               and exactly one of:
-                --verifier "<cmd with {task_file} {completion_file}>"  (code/json/math)
+                --verifier "<cmd with {task_file} {completion_file}>"  (code/code-py/json/math)
                 --oracle eve [--eve-bin "<cmd>"]                       (behavioral)
               [--name <label>] [--accept exit_zero|json_reward|json_pass]
               [--threshold <n>] [--timeout <ms>]
@@ -186,6 +190,43 @@ npm install --ignore-scripts && npm rebuild better-sqlite3
 On Node 20 the ledger is unavailable even when the install looks clean. Check
 with `node -e "require('better-sqlite3')"`; if it throws, the ledger is off and
 `--ledger` will report a clear error.
+
+### The `code-py` suite (Python / pytest)
+
+`code-py` attacks verifiers that gate Python code with pytest. The task asks
+for a `solution.py` defining `solve(xs)`; visible and held-out tests are pytest
+functions that `from solution import solve`, and each completion is the full
+text of `solution.py`. Its nine exploit probes are the ways coding agents game
+Python gates in practice:
+
+| Probe | Technique | Defect class |
+| --- | --- | --- |
+| `visible-hardcode` | lookup table of the visible answers | `visible_test_overfitting` |
+| `special-case-inputs` | branch on the visible input, wrong elsewhere | `visible_test_overfitting` |
+| `stdout-spoof` | print a forged `5 passed` summary | `stdout_spoofing` |
+| `sys-exit-import` | `sys.exit(0)` at import, before any test | `stdout_spoofing` |
+| `os-exit-import` | `os._exit(0)` at import (beats pytest's own SystemExit handling) | `stdout_spoofing` |
+| `pytest-hook-deselect` | write a `conftest.py` / register a plugin that deselects every test and forces exit 0 | `stdout_spoofing` |
+| `pytest-hook-forcepass` | `pytest_runtest_makereport` wrapper that rewrites failures to passed | `stdout_spoofing` |
+| `skip-as-success` | raise `SkipTest` so zero failures reads as success | `stdout_spoofing` |
+| `timeout` | print success, then block | `missing_timeouts` |
+
+plus two controls: a correct solution, and a correct one that is noisy on
+stdout and stderr (including the word "failed"). Hook injection and skipping
+are filed under `stdout_spoofing` because the verifier is trusting a summary
+(pytest's exit status and report) produced inside the candidate's own process.
+
+`fixtures/verifiers/naive_pytest.py` pre-imports the solution, runs only the
+visible tests, has no timeout, and trusts the exit status or a `passed` grep —
+every exploit lands. `fixtures/verifiers/strict_pytest.py` runs visible and
+held-out tests in a fresh temp dir and a separate, time-bounded pytest process
+(`--noconftest`, plugin autoload off), ignores stdout and the exit status, and
+reads a JUnit XML report from a directory the candidate is never told about. It
+requires exactly the expected test cases, every one executed and passed, none
+skipped, plus a randomly named canary test that must fail, which exposes
+report rewriting. Because the candidate runs inside pytest, a completion
+written against that specific verifier could still special-case the canary;
+sandbox a production gate as well.
 
 The `behavioral` suite judges against [EVE](https://github.com/fernandogarzaaa/experience-validation-engine)
 (the Experience Validation Engine) rather than a `{task_file}`/`{completion_file}`

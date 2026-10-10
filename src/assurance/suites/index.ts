@@ -8,11 +8,13 @@
 import type { ProbeSuite } from "../probe.js";
 import { behavioralSuite } from "./behavioral.js";
 import { codeSuite } from "./code.js";
+import { codePySuite } from "./code-py.js";
 import { jsonSuite } from "./json.js";
 import { mathSuite } from "./math.js";
 
 export const SUITES: Readonly<Record<string, ProbeSuite>> = {
   code: codeSuite,
+  "code-py": codePySuite,
   json: jsonSuite,
   math: mathSuite,
   behavioral: behavioralSuite,
@@ -26,4 +28,4 @@ export function getSuite(name: string): ProbeSuite | undefined {
   return SUITES[name];
 }
 
-export { codeSuite, jsonSuite, mathSuite, behavioralSuite };
+export { codeSuite, codePySuite, jsonSuite, mathSuite, behavioralSuite };

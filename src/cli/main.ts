@@ -49,7 +49,7 @@ const USAGE = `genesis ${VERSION} — universal evaluation & assurance for AI-na
     genesis claims <spec.yaml>                                                 (show claim + hypotheses)
 
   Trust ("should I believe the verdict?"):
-    genesis audit-evaluator <spec.yaml> [--suite <code|json|math|behavioral>] [--ledger <db>] [--json]
+    genesis audit-evaluator <spec.yaml> [--suite <code|code-py|json|math|behavioral>] [--ledger <db>] [--json]
     genesis trust <spec.yaml> [--suite <...>] [--out <dir>] [--ledger <db>] [--json]
       exit 0 = TRUSTED · 1 = UNTRUSTED · 2 = INCONCLUSIVE · 3 = internal error
 
@@ -69,9 +69,9 @@ const USAGE = `genesis ${VERSION} — universal evaluation & assurance for AI-na
     genesis keygen --out <prefix>                              (Ed25519 keypair)
 
   Assurance ("can I trust the evaluator?"):
-    genesis audit              --suite <code|json|math|behavioral> [--ledger <db>] [--json] [--verbose]
+    genesis audit              --suite <code|code-py|json|math|behavioral> [--ledger <db>] [--json] [--verbose]
                                and exactly one of:
-                                 --verifier "<cmd with {task_file} {completion_file}>"  (code/json/math)
+                                 --verifier "<cmd with {task_file} {completion_file}>"  (code/code-py/json/math)
                                  --oracle eve [--eve-bin "<cmd>"]                       (behavioral)
                                [--name <label>] [--accept exit_zero|json_reward|json_pass]
                                [--threshold <n>] [--timeout <ms>]
@@ -187,7 +187,7 @@ async function cmdAudit(argv: readonly string[]): Promise<number> {
   if (!!values.verifier === (values.oracle !== undefined)) {
     return usageError(
       'pass exactly one of --verifier "<cmd with {task_file} {completion_file}>" (RLVR-style suites: ' +
-        "code/json/math) or --oracle eve (behavioral-style suites: behavioral)",
+        "code/code-py/json/math) or --oracle eve (behavioral-style suites: behavioral)",
     );
   }
 
@@ -545,7 +545,7 @@ async function cmdAuditEvaluator(argv: readonly string[]): Promise<number> {
   });
   const specPath = positionals[0];
   if (!specPath) {
-    return usageError("usage: genesis audit-evaluator <spec.yaml> [--suite <code|json|math|behavioral>] [--ledger <db>] [--json]");
+    return usageError("usage: genesis audit-evaluator <spec.yaml> [--suite <code|code-py|json|math|behavioral>] [--ledger <db>] [--json]");
   }
   const { loadSpecFile } = await import("../eval/spec.js");
   const { assureEvaluator, renderAssurance } = await import("../eval/assurance.js");

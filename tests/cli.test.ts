@@ -64,6 +64,7 @@ describe("genesis suites", () => {
     expect(code).toBe(0);
     expect(cap.stdout()).toContain("json@");
     expect(cap.stdout()).toContain("code@");
+    expect(cap.stdout()).toContain("code-py@");
   });
 });
 
