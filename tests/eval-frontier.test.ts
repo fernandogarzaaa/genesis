@@ -13,7 +13,7 @@ import {
   attestBundle, digestBundle, fingerprint, generateKeypair, verifyBundle,
 } from "../src/eval/attest.js";
 import { loadBenchmark, resolveBenchmarkDataset } from "../src/eval/benchmarks.js";
-import { buildManifest, writeEvidenceBundle } from "../src/eval/bundle.js";
+import { buildManifest, verifyEvidenceBundle, writeEvidenceBundle } from "../src/eval/bundle.js";
 import { createEvaluator } from "../src/eval/evaluators.js";
 import { decideGate } from "../src/eval/gate.js";
 import { runExperiment } from "../src/eval/runner.js";
@@ -248,6 +248,24 @@ describe("bundle attestation", () => {
       rmSync(target, { recursive: true, force: true });
     }
   });
+
+  it("attesting does not invalidate the evidence-tree check (CLI verify round-trip)", async () => {
+    const target = await bundleDir();
+    try {
+      const { privateKey, publicKey } = generateKeypair();
+      attestBundle(target, "reviewer", privateKey);
+      // The attestation file itself must not count as tampering: this is
+      // the tree check `genesis verify` runs before the signature checks.
+      expect(verifyEvidenceBundle(target).ok).toBe(true);
+      expect(verifyBundle(target, [publicKey]).ok).toBe(true);
+      // Tampering with evidence after attestation still fails both checks.
+      writeFileSync(join(target, "verdict.json"), '{"verdict":"SUPPORTED (edited)"}', "utf8");
+      expect(verifyEvidenceBundle(target).ok).toBe(false);
+      expect(verifyBundle(target, [publicKey]).ok).toBe(false);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
 
 // ── analysis attachments ──
