@@ -242,9 +242,9 @@ and Ed25519 bundle attestation for external reviewers.
 ```bash
 genesis gate evaluation.yaml --out ./release          # RELEASE/BLOCK/INCONCLUSIVE
 genesis run-benchmark safety-v1 --subject "cmd"       # misuse-resistance probe
-genesis attest ./release/evaluation --signer eve --key eve.pem
-genesis verify ./release/evaluation --pubkey eve.pub.pem
-genesis keygen --out eve
+genesis attest ./release/evaluation --signer eve --key eve.ed25519.pem
+genesis verify ./release/evaluation --pubkey eve.ed25519.pub.pem
+genesis keygen --out eve   # writes eve.ed25519.pem + eve.ed25519.pub.pem
 ```
 
 ```yaml
