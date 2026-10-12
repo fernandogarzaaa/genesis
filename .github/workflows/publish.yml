@@ -1,0 +1,59 @@
+name: Publish to npm
+
+# Runs only when a version tag (vX.Y.Z) is pushed. Requires an NPM_TOKEN
+# repository secret (automation token with publish rights to genesis-assurance).
+# Publishes with npm provenance, so the package links back to this workflow run.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+  id-token: write # required for npm --provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Check tag matches package.json version
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "v${PKG_VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${PKG_VERSION}"
+            exit 1
+          fi
+
+      - name: Skip if this version is already on npm
+        id: exists
+        run: |
+          PKG="$(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
+          if npm view "$PKG" version >/dev/null 2>&1; then
+            echo "$PKG is already published; nothing to do."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.exists.outputs.published == 'false'
+        run: npm ci
+
+      - if: steps.exists.outputs.published == 'false'
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test
+          npm run build
+          node bin/genesis.js --help
+
+      - if: steps.exists.outputs.published == 'false'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
