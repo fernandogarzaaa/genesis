@@ -232,6 +232,30 @@ describe("verifier adapter", () => {
     expect(response.note).not.toContain("Node.js v22");
   });
 
+  it("hints --accept exit_zero when a verifier exits cleanly with no output", async () => {
+    const probe = codeSuite.probes[0];
+    if (!probe) throw new Error("fixture");
+    const judge = (result: { exit_code: number; stdout: string; stderr: string }) =>
+      new VerifierAdapter(
+        { name: "t", command: ["x", "{task_file}", "{completion_file}"], accept: { kind: "json_reward" }, timeout_ms: 100 },
+        new FakeRunner({}, result),
+      ).judge(probe);
+
+    for (const exit_code of [0, 1]) {
+      const silent = await judge({ exit_code, stdout: "", stderr: "" });
+      expect(silent.observed).toBe("error");
+      expect(silent.note).toContain("empty stdout");
+      expect(silent.note).toContain("--accept exit_zero");
+    }
+    // A crash (stderr present) or an unusual exit code is not an exit-code verifier.
+    const crashed = await judge({ exit_code: 1, stdout: "", stderr: "Error: boom" });
+    expect(crashed.note).not.toContain("--accept exit_zero");
+    const killed = await judge({ exit_code: 137, stdout: "", stderr: "" });
+    expect(killed.note).not.toContain("--accept exit_zero");
+    const chatty = await judge({ exit_code: 0, stdout: "ok", stderr: "" });
+    expect(chatty.note).not.toContain("--accept exit_zero");
+  });
+
   it("parses JSON embedded in surrounding output", () => {
     expect(parseJsonLoose('noise {"reward":1} noise')).toEqual({ reward: 1 });
     expect(parseJsonLoose("not json at all")).toBeNull();

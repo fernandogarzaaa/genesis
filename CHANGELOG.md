@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `genesis audit`: when a verifier exits 0/1 with no output at all (an exit-code verifier run under the default JSON acceptance rule), each probe note now says `if the verifier reports by exit code, use --accept exit_zero` instead of only "not parseable JSON (empty stdout)", which read as 100% unreadable / UNRELIABLE with no next step.
+
 ### Added / Changed
 - Tag-triggered npm publish workflow (`.github/workflows/publish.yml`): on a `vX.Y.Z` tag it checks the tag matches `package.json`, skips versions already on npm, runs typecheck/lint/test/build, then `npm publish --provenance`. Needs an `NPM_TOKEN` repository secret.
 - `biome.json` migrated to the Biome 2.5.15 schema (`biome migrate`).

@@ -203,6 +203,16 @@ function unparseableNote(result: { exit_code: number | null; stdout: string; std
     [...lines].reverse().find((line) => /error|exception|cannot|not found|no such/i.test(line)) ??
     lines.at(-1);
   if (errorLine) details.push(`stderr: ${redact(errorLine).slice(0, 200)}`);
+  // A verifier that exits cleanly (0 or 1) and prints nothing at all is almost
+  // always one that reports its verdict by exit code, run under the default
+  // JSON acceptance rule. Say so, or every probe reads as "unreadable".
+  if (
+    result.stdout.trim() === "" &&
+    lines.length === 0 &&
+    (result.exit_code === 0 || result.exit_code === 1)
+  ) {
+    details.push("if the verifier reports by exit code, use --accept exit_zero");
+  }
   return details.length > 0 ? `${base} (${details.join("; ")})` : base;
 }
 
