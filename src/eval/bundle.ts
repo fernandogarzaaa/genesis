@@ -26,7 +26,7 @@ import { computeEnvDigest } from "../evidence/runner.js";
 import type { ExperimentResult } from "./runner.js";
 import type { EvalSpec } from "./spec.js";
 
-export const GENESIS_VERSION = "0.3.0";
+export const GENESIS_VERSION = "0.4.0";
 export const BUNDLE_DIGEST_VERSION = 2;
 
 export interface Manifest {
