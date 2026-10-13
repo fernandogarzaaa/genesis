@@ -1,7 +1,8 @@
 name: Publish to npm
 
-# Runs only when a version tag (vX.Y.Z) is pushed. Requires an NPM_TOKEN
-# repository secret (automation token with publish rights to genesis-assurance).
+# Runs only when a version tag (vX.Y.Z) is pushed. Publishes only when an
+# NPM_TOKEN repository secret (automation token with publish rights to
+# genesis-assurance) is set; without it the run succeeds and skips publishing.
 # Publishes with npm provenance, so the package links back to this workflow run.
 on:
   push:
@@ -31,12 +32,19 @@ jobs:
             exit 1
           fi
 
-      - name: Skip if this version is already on npm
+      - name: Skip if this version is already on npm or no NPM_TOKEN is configured
         id: exists
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           PKG="$(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
           if npm view "$PKG" version >/dev/null 2>&1; then
             echo "$PKG is already published; nothing to do."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "${NPM_TOKEN}" ]; then
+            # No secret (e.g. the package is published by hand): succeed
+            # without publishing instead of failing the tag run.
+            echo "::notice::NPM_TOKEN secret is not set; skipping npm publish of $PKG."
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
