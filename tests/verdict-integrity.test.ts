@@ -297,7 +297,7 @@ describe("bundle integrity", () => {
   });
 
   it("genesis version bumped for breaking digest change", () => {
-    expect(GENESIS_VERSION).toBe("0.3.0");
+    expect(GENESIS_VERSION).toBe("0.4.0");
   });
 });
 

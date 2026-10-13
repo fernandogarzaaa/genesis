@@ -19,7 +19,7 @@ import { VerifierAdapter, type AcceptRule, type Judge } from "../assurance/verif
 import type { EvalSpec } from "../eval/spec.js";
 import { SubprocessRunner } from "../evidence/runner.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 /** Load the Ledger class, or throw a clear error if better-sqlite3 is unavailable. */
 async function loadLedger(): Promise<typeof import("../ledger/ledger.js").Ledger> {
