@@ -3,14 +3,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { isLedgerAvailable, Ledger } from "../src/ledger/ledger.js";
+import { Ledger } from "../src/ledger/ledger.js";
 import { ZERO_HASH } from "../src/shared/canonical.js";
 
 const require = createRequire(import.meta.url);
 
 /**
- * Raw driver access for chain-integrity checks. Only called inside tests
- * gated on isLedgerAvailable(), so the require cannot throw here.
+ * Raw driver access for chain-integrity checks. The suite runs unconditionally:
+ * if better-sqlite3 is missing, the Ledger constructor throws its actionable
+ * MISSING_DRIVER_ERROR instead of silently skipping, so CI fails loudly.
  */
 function rawDb(path: string) {
   const Driver = require("better-sqlite3");
@@ -35,7 +36,7 @@ function fixedClock(start = 1_770_000_000_000): () => number {
   return () => (t += 1000);
 }
 
-describe.skipIf(!isLedgerAvailable())("ledger chain", () => {
+describe("ledger chain", () => {
   it("starts from the zero hash", () => {
     const ledger = new Ledger(path, fixedClock());
     const entry = ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
@@ -123,7 +124,7 @@ describe.skipIf(!isLedgerAvailable())("ledger chain", () => {
   });
 });
 
-describe.skipIf(!isLedgerAvailable())("ledger reads", () => {
+describe("ledger reads", () => {
   it("filters entries by type and subject hash", () => {
     const ledger = new Ledger(path, fixedClock());
     ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
@@ -152,7 +153,7 @@ describe.skipIf(!isLedgerAvailable())("ledger reads", () => {
   });
 });
 
-describe.skipIf(!isLedgerAvailable())("artifacts", () => {
+describe("artifacts", () => {
   it("round-trips content by digest", () => {
     const ledger = new Ledger(path, fixedClock());
     const digest = ledger.putArtifact("hello world");
@@ -177,7 +178,7 @@ describe.skipIf(!isLedgerAvailable())("artifacts", () => {
   });
 });
 
-describe.skipIf(!isLedgerAvailable())("export", () => {
+describe("export", () => {
   it("emits one JSON object per entry", () => {
     const ledger = new Ledger(path, fixedClock());
     ledger.recordVerifierAudit("subject-1", { verdict: "SOUND" });
