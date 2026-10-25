@@ -28,13 +28,13 @@ type DatabaseConstructor = new (
 ) => Database.Database;
 
 const MISSING_DRIVER_ERROR =
-  "The ledger requires the optional 'better-sqlite3' dependency, which is not installed or failed to load. " +
+  "The ledger requires the 'better-sqlite3' dependency, which is not installed or failed to load. " +
   "Install it with: npm install better-sqlite3. " +
   "If the native build fails in a restricted container, install without build scripts " +
   "and rebuild the binding afterwards: npm install --ignore-scripts && npm rebuild better-sqlite3";
 
 /**
- * True when the optional better-sqlite3 dependency is installed and its
+ * True when the better-sqlite3 dependency is installed and its
  * native binding loads. Ledger-backed tests and CLI paths use this to
  * degrade gracefully instead of failing at module load.
  */
