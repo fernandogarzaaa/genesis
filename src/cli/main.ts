@@ -31,7 +31,7 @@ async function loadLedger(): Promise<typeof import("../ledger/ledger.js").Ledger
     return Ledger;
   } catch {
     throw new Error(
-      "The ledger requires the optional 'better-sqlite3' dependency, which is not installed. " +
+      "The ledger requires the 'better-sqlite3' dependency, which is not installed. " +
       "Install it with: npm install better-sqlite3 " +
       "(if the build fails in a restricted container, try: npm install --ignore-scripts better-sqlite3)",
     );
