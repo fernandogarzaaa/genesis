@@ -172,17 +172,20 @@ carries the verifier's exit code and the stderr line that names the failure
 evidence only when someone needs to prove it happened — recorded in a
 hash-chained, append-only, tamper-evident ledger (`src/ledger/`).
 
-### Install notes: the optional better-sqlite3 dependency
+### Install notes: the better-sqlite3 dependency
 
-The ledger backend is the optional `better-sqlite3` dependency. It is a native
-module: if its build is skipped or fails during `npm install`, npm drops it
-silently (it is optional) and ledger-backed features are unavailable. The CLI
-then reports a clear error instead of a crash, and ledger-backed tests skip
-themselves. To get the ledger in a restricted container where the native build
-fails (for example `node-gyp` permission errors), install without build
-scripts and then rebuild just that binding:
+The ledger backend is the `better-sqlite3` dependency. It is a native
+module, and the full test suite requires it. Ledger-backed tests do not
+skip themselves: if the driver is missing or fails to load, the 13 ledger
+tests fail with a clear error instead of passing silently, and the CLI
+`--ledger` path reports a clear error instead of a crash. Install it with
+a normal `npm install`, and if the native build is skipped or fails in a
+restricted container (for example `node-gyp` permission errors) so the
+driver is missing even though `npm install` exited 0, install it
+explicitly and rebuild just that binding:
 
 ```bash
+npm install better-sqlite3
 npm install --ignore-scripts && npm rebuild better-sqlite3
 ```
 
